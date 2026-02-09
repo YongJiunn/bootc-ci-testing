@@ -11,5 +11,6 @@ do
 done
 curl -sSLO https://github.com/casey/just/releases/download/"${JUST_VERSION}"/just-"${JUST_VERSION}"-x86_64-unknown-linux-musl.tar.gz
 tar -zxvf just-"${JUST_VERSION}"-x86_64-unknown-linux-musl.tar.gz -C /tmp just
-sudo mv /tmp/just /usr/local/bin/just
+# sudo mv /tmp/just /usr/local/bin/just
+mv /tmp/just /usr/local/bin/just
 rm -f just-"${JUST_VERSION}"-x86_64-unknown-linux-musl.tar.gz
