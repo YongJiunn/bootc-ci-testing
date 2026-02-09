@@ -1,0 +1,32 @@
+name: bootc-build-postgres
+
+on:
+  push:
+    branches: [ Bootc-CI-Pipeline ]
+  pull_request:
+
+jobs:
+  build-postgres:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+
+      - name: Build postgres bootc image
+        run: |
+          podman build \
+            -f Containerfile \
+            -t bootc-postgres:test \
+            --build-arg VARIANT=postgres \
+            --build-arg HARDENED=true \
+            --build-arg DEFAULT_PASSWORD=dummy \
+            --build-arg POSTGRES_EXPORTER_PASSWORD=dummy \
+            --build-arg POSTGRESQL_REPLICATION_PASSWORD=dummy \
+            --no-cache \
+            .

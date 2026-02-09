@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xccdf:Tailoring xmlns:xccdf="http://checklists.nist.gov/xccdf/1.2" id="xccdf_scap-workbench_tailoring_default">
+  <xccdf:benchmark href="{benchmark_href}"/>
+  <xccdf:version time="{timestamp}">{version}</xccdf:version>
+  <xccdf:Profile id="{profile_id}">
+    <xccdf:version>{profile_version}</xccdf:version>
+    <xccdf:title>{profile_title}</xccdf:title>
+    <xccdf:description>{profile_description}</xccdf:description>
+    {selections}
+    {set_values}
+    {refine_values}
+  </xccdf:Profile>
+</xccdf:Tailoring>

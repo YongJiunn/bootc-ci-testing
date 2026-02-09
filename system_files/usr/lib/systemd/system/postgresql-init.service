@@ -1,0 +1,11 @@
+[Unit]
+Description=Postgres Init
+After=network.target
+Before=postgresql-POSTGRESQL_MAJOR_VERSION.service
+
+[Service]
+ExecStart=/opt/postgres/scripts/postgresql-init.sh
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

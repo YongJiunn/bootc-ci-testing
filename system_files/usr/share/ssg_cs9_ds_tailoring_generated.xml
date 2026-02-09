@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xccdf:Tailoring xmlns:xccdf="http://checklists.nist.gov/xccdf/1.2" id="xccdf_scap-workbench_tailoring_default">
+  <xccdf:benchmark href="C:/Users/souluseless/Downloads/ssg-cs9-ds.xml"/>
+  <xccdf:version time="2025-12-17T16:18:27">{version}</xccdf:version>
+  <xccdf:Profile id="xccdf_org.ssgproject.content_profile_cis_customized">
+    <xccdf:version>2.0.0</xccdf:version>
+    <xccdf:title>CIS Red Hat Enterprise Linux 9 Benchmark for Level 2 - Server [CUSTOMIZED]</xccdf:title>
+    <xccdf:description>This profile defines a baseline that aligns to the 'Level 2 - Server' configuration...</xccdf:description>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_audit_rules_privileged_commands" selected="false"/>
+
+    <xccdf:set-value idref=""></xccdf:set-value>
+
+    <xccdf:refine-value idref="" selector=""/>
+
+  </xccdf:Profile>
+</xccdf:Tailoring>

@@ -1,0 +1,10 @@
+[Unit]
+Description=Vector
+After=network.target
+
+[Service]
+ExecStart=vector --config /etc/vector/vector.yaml
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
