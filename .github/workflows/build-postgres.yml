@@ -1,8 +1,9 @@
 name: bootc-build-postgres
 
 on:
+  workflow_dispatch:
   push:
-    branches: [ Bootc-CI-Pipeline ]
+    branches: [ main ]
   pull_request:
 
 jobs:
