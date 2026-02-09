@@ -27,6 +27,7 @@ jobs:
             --build-arg VARIANT=postgres \
             --build-arg HARDENED=true \
             --build-arg DEFAULT_PASSWORD=dummy \
+            --build-arg BOOTLOADER_PASSWORD=dummy \
             --build-arg POSTGRES_EXPORTER_PASSWORD=dummy \
             --build-arg POSTGRESQL_REPLICATION_PASSWORD=dummy \
             --no-cache \
