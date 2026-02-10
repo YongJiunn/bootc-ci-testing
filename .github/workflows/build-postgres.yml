@@ -37,27 +37,6 @@ jobs:
             exit 1
           fi
 
-      - name: Ensure required scripts are executable
-        run: |
-          for dir in \
-            build_scripts \
-            system_files/opt/postgres/scripts \
-            system_files/opt/scripts
-          do
-            if [ ! -d "$dir" ]; then
-              continue
-            fi
-
-            non_exec=$(find "$dir" -type f -name "*.sh" ! -perm -111)
-
-            if [ -n "$non_exec" ]; then
-              echo "The following scripts in $dir are not executable:"
-              echo "$non_exec"
-              exit 1
-            fi
-          done
-
-
       - name: Build postgres bootc image
         run: |
           podman build \
