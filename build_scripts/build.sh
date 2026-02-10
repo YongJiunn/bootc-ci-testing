@@ -34,7 +34,8 @@ if [ "$HARDENED" = "true" ]; then
 fi
 
 # populate the build args into the boot scripts
-for file in $(find /opt -name "*.sh" -type f -print); do
+# populate the build args into the boot scripts
+find /opt -name "*.sh" -type f -print0 | while IFS= read -r -d '' file; do
     sed -i "s/ADMIN_USERNAME/$ADMIN_USERNAME/g" "$file"
 
     # harden config
@@ -71,7 +72,8 @@ if [ "$VARIANT" = "postgres" ]; then
     fi
 
     # populate the build args into the boot scripts
-    for file in $(find /opt -name "*.sh" -type f -print); do
+    # populate the build args into the boot scripts
+    find /opt -name "*.sh" -type f -print0 | while IFS= read -r -d '' file; do
         ## configure the postgresql init script
         sed -i "s/POSTGRESQL_MAJOR_VERSION/$POSTGRESQL_MAJOR_VERSION/g" "$file"
         sed -i "s/POSTGRES_EXPORTER_USER/$POSTGRES_EXPORTER_USER/g" "$file"
@@ -94,8 +96,8 @@ fi
 
 # run the build scripts in order
 find "${BUILD_SCRIPTS_PATH}" -maxdepth 1 -iname "*-*.sh" -type f -print0 | sort --zero-terminated --sort=human-numeric | while IFS= read -r -d $'\0' script ; do
-    printf "$(basename "$script")"
-    "$(realpath $script)"
+    printf "%s" "$(basename "$script")"
+    "$(realpath "$script")"
     printf "::endgroup::\n"
 done
 

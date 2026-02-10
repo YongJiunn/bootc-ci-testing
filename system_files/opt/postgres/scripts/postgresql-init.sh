@@ -7,10 +7,11 @@ set -ouex pipefail
 # Note: the specfile inserts the correct value during package build
 PGVERSION=POSTGRESQL_MAJOR_VERSION
 # PGMAJORVERSION is major version, e.g., 15 (this should match PG_VERSION)
+# shellcheck disable=SC2001
 PGMAJORVERSION=$(echo "$PGVERSION" | sed 's/^\([0-9]*\.[0-9]*\).*$/\1/')
 # PGENGINE is the directory containing the postmaster executable
 # Note: the specfile inserts the correct value during package build
-PGENGINE=/usr/pgsql-$PGVERSION/bin
+# PGENGINE=/usr/pgsql-$PGVERSION/bin
 # The second parameter is the new database version, i.e. $PGMAJORVERSION in this case.
 # Use  "postgresql-$PGMAJORVERSION" service, if not specified.
 SERVICE_NAME=postgresql-$PGMAJORVERSION
@@ -28,7 +29,7 @@ fi
 
 PGDATA=/var/lib/pgsql/$PGMAJORVERSION/data
 
-if [ x"$PGDATA" = x ]; then
+if [ -z "$PGDATA" ]; then
     echo "failed to find PGDATA setting in ${SERVICE_NAME}.service"
     exit 1
 fi
@@ -49,13 +50,13 @@ else
   fi
 
   # configure all can access and login using password
-  echo "listen_addresses='*'" >> $PGDATA/postgresql.conf
-  echo "host    all             all             0.0.0.0/0            scram-sha-256" >> $PGDATA/pg_hba.conf
+  echo "listen_addresses='*'" >> "$PGDATA"/postgresql.conf
+  echo "host    all             all             0.0.0.0/0            scram-sha-256" >> "$PGDATA"/pg_hba.conf
 
   # configure max connections - https://stackoverflow.com/questions/30778015/how-to-increase-the-max-connections-in-postgres
-  sed -i 's/max_connections = [0-9]\+/max_connections = 300/' $PGDATA/postgresql.conf
+  sed -i 's/max_connections = [0-9]\+/max_connections = 300/' "$PGDATA"/postgresql.conf
   
-  systemctl restart ${SERVICE_NAME}.service
+  systemctl restart "${SERVICE_NAME}".service
 
   # run the harden script if it is present inside the same directory
   # Get the directory where this script is located
@@ -72,7 +73,7 @@ else
       fi
   done
 
-  systemctl restart ${SERVICE_NAME}.service
+  systemctl restart "${SERVICE_NAME}".service
 
   USERNAME=POSTGRESQL_USERNAME
 
@@ -90,4 +91,4 @@ else
   done
 fi
 
-systemctl restart ${SERVICE_NAME}.service
+systemctl restart "${SERVICE_NAME}".service

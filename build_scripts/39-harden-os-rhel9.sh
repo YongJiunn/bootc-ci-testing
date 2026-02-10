@@ -1,4 +1,4 @@
-#/bin/bash
+#!/bin/bash
 set -xeuo pipefail
 
 # Install OpenSCAP scanner and security content to the image

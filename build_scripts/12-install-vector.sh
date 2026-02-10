@@ -7,7 +7,7 @@ url=$(curl -s https://api.github.com/repos/vectordotdev/vector/releases | \
   jq -r 'sort_by(.published_at) | last | .assets[] | select(.name | test(".*x86_64-unknown-linux-musl.*")) | .browser_download_url')
 
 mkdir -p vector && \
-  curl -sSfL --proto '=https' --tlsv1.2 $url  | \
+  curl -sSfL --proto '=https' --tlsv1.2 "$url"  | \
   tar xzf - -C vector --strip-components=2
 
 #ls vector

@@ -19,6 +19,45 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y podman
 
+      - name: Install ShellCheck
+        run: sudo apt-get install -y shellcheck
+
+      # - name: ShellCheck build scripts
+      #   run: |  
+      #     shellcheck build_scripts/*.sh system_files/opt/postgres/scripts/*.sh system_files/opt/scripts/*.sh
+
+      - name: ShellCheck all shell scripts
+        run: |
+          shellcheck $(find . -type f -name "*.sh")
+
+      - name: CRLF check
+        run: |
+          if grep -R $'\r' build_scripts Containerfile; then
+            echo "CRLF line endings detected. Use LF only."
+            exit 1
+          fi
+
+      - name: Ensure required scripts are executable
+        run: |
+          for dir in \
+            build_scripts \
+            system_files/opt/postgres/scripts \
+            system_files/opt/scripts
+          do
+            if [ ! -d "$dir" ]; then
+              continue
+            fi
+
+            non_exec=$(find "$dir" -type f -name "*.sh" ! -perm -111)
+
+            if [ -n "$non_exec" ]; then
+              echo "The following scripts in $dir are not executable:"
+              echo "$non_exec"
+              exit 1
+            fi
+          done
+
+
       - name: Build postgres bootc image
         run: |
           podman build \

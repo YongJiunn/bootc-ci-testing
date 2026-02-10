@@ -27,10 +27,11 @@ set_or_append_config_kv() {
 # Note: the specfile inserts the correct value during package build
 PGVERSION=POSTGRESQL_MAJOR_VERSION
 # PGMAJORVERSION is major version, e.g., 15 (this should match PG_VERSION)
+# shellcheck disable=SC2001
 PGMAJORVERSION=$(echo "$PGVERSION" | sed 's/^\([0-9]*\.[0-9]*\).*$/\1/')
 # PGENGINE is the directory containing the postmaster executable
 # Note: the specfile inserts the correct value during package build
-PGENGINE=/usr/pgsql-$PGVERSION/bin
+# PGENGINE=/usr/pgsql-$PGVERSION/bin
 # The second parameter is the new database version, i.e. $PGMAJORVERSION in this case.
 # Use  "postgresql-$PGMAJORVERSION" service, if not specified.
 SERVICE_NAME=postgresql-$PGMAJORVERSION
@@ -45,6 +46,7 @@ chown postgres:postgres $PGBACKUP_FOLDER
 echo "umask 077" >> ~postgres/.bash_profile
 
 # TODO: catalog down the CIS benchmark that this fixes
+# shellcheck disable=SC2034
 declare -A configuration_changes=(
     ["log_filename"]="postgresql-%Y%m%d.log" # cis 3.1.5
     ["log_rotation_age"]="1d" # cis 3.1.8
@@ -66,7 +68,7 @@ declare -A configuration_changes=(
     ["ssl_key_file"]='server.key'  # cis 6.8
 )
 config_file="$PGDATA/postgresql.conf"
-set_or_append_config_kv configuration_changes $config_file
+set_or_append_config_kv configuration_changes "$config_file"
 
 PG_ISREADY="/usr/pgsql-$PGMAJORVERSION/bin/pg_isready"
 
@@ -93,22 +95,23 @@ firewall-cmd --permanent --zone=public --add-port=5432/tcp
 firewall-cmd --reload
 
 # generate default certificate configurations
-openssl genrsa -out $PGDATA/rootCA.key 4096
-openssl req -x509 -new -nodes -key $PGDATA/rootCA.key -sha256 -days 3650 -out $PGDATA/root-ca.crt \
+# generate default certificate configurations
+openssl genrsa -out "$PGDATA"/rootCA.key 4096
+openssl req -x509 -new -nodes -key "$PGDATA"/rootCA.key -sha256 -days 3650 -out "$PGDATA"/root-ca.crt \
     -subj "/C=US/ST=Placeholder/L=City/O=ExampleOrg/OU=RootCA/CN=ExampleRootCA"
-openssl genrsa -out $PGDATA/server.key 2048
-openssl req -new -key $PGDATA/server.key -out $PGDATA/server.csr \
+openssl genrsa -out "$PGDATA"/server.key 2048
+openssl req -new -key "$PGDATA"/server.key -out "$PGDATA"/server.csr \
     -subj "/C=US/ST=Placeholder/L=City/O=ExampleOrg/OU=Server/CN=example.com"
-openssl x509 -req -in $PGDATA/server.csr -CA $PGDATA/root-ca.crt -CAkey $PGDATA/rootCA.key -CAcreateserial \
-    -out $PGDATA/server.crt -days 825 -sha256
-rm $PGDATA/server.csr $PGDATA/rootCA.key
+openssl x509 -req -in "$PGDATA"/server.csr -CA "$PGDATA"/root-ca.crt -CAkey "$PGDATA"/rootCA.key -CAcreateserial \
+    -out "$PGDATA"/server.crt -days 825 -sha256
+rm "$PGDATA"/server.csr "$PGDATA"/rootCA.key
 # ensure permissions
-chown postgres:postgres $PGDATA/root-ca.crt $PGDATA/server.key $PGDATA/server.crt
-chmod 600 $PGDATA/root-ca.crt $PGDATA/server.key $PGDATA/server.crt
+chown postgres:postgres "$PGDATA"/root-ca.crt "$PGDATA"/server.key "$PGDATA"/server.crt
+chmod 600 "$PGDATA"/root-ca.crt "$PGDATA"/server.key "$PGDATA"/server.crt
 
 # override to enforce ssl connections only - tls config is buggy
-sed -i '/0\.0\.0\.0/ s/^host\b/hostssl/' $PGDATA/pg_hba.conf
-sed -i 's/^host\b/hostssl/' $PGDATA/pg_hba.conf
+sed -i '/0\.0\.0\.0/ s/^host\b/hostssl/' "$PGDATA"/pg_hba.conf
+sed -i 's/^host\b/hostssl/' "$PGDATA"/pg_hba.conf
 
 
-systemctl restart ${SERVICE_NAME}.service
+systemctl restart "${SERVICE_NAME}".service

@@ -14,7 +14,7 @@ fi
 echo "hardening"
 
 # installing packages that are required to be hardened
-dnf -y install pgaudit_$POSTGRESQL_MAJOR_VERSION set_user_$POSTGRESQL_MAJOR_VERSION pgbackrest
+dnf -y install pgaudit_"$POSTGRESQL_MAJOR_VERSION" set_user_"$POSTGRESQL_MAJOR_VERSION" pgbackrest
 
 # fips mode - https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/9/html/using_image_mode_for_rhel_to_build_deploy_and_manage_operating_systems/enabling-the-fips-mode-while-building-a-bootc-image#enabling-the-fips-mode-by-using-bootc-image-builder-tool_enabling-the-fips-mode-while-building-a-bootc-image
 # When booting the RHEL Anaconda installer, on the installation screen, press the TAB key and add the fips=1 kernel argument.
