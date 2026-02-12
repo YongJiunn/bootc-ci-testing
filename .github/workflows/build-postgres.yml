@@ -47,6 +47,13 @@ jobs:
             --no-cache \
             .
 
+      - name: Save image as OCI archive
+        run: |
+          podman save \
+            --format oci-archive \
+            -o bootc-postgres.tar \
+            bootc-postgres:test
+
       - name: Install Trivy
         run: |
           sudo apt-get update
@@ -70,7 +77,7 @@ jobs:
             --exit-code 1 \
             --ignorefile .trivyignore \
             --no-progress \
-            bootc-postgres:test
+            --input bootc-postgres.tar
 
       - name: Validate Trivy waiver documentation
         run: |
@@ -89,7 +96,7 @@ jobs:
             --ignorefile .trivyignore \
             --format table \
             --output trivy-report.txt \
-            bootc-postgres:test
+            --input bootc-postgres.tar
 
       - name: Upload Trivy report
         if: always()
