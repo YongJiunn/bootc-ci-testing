@@ -22,10 +22,6 @@ jobs:
       - name: Install ShellCheck
         run: sudo apt-get install -y shellcheck
 
-      # - name: ShellCheck build scripts
-      #   run: |  
-      #     shellcheck build_scripts/*.sh system_files/opt/postgres/scripts/*.sh system_files/opt/scripts/*.sh
-
       - name: ShellCheck all shell scripts
         run: |
           shellcheck $(find . -type f -name "*.sh")
@@ -50,3 +46,54 @@ jobs:
             --build-arg POSTGRESQL_REPLICATION_PASSWORD=dummy \
             --no-cache \
             .
+
+      - name: Install Trivy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg lsb-release
+
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | \
+            sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] \
+            https://aquasecurity.github.io/trivy-repo/deb \
+            $(lsb_release -sc) main" | \
+            sudo tee /etc/apt/sources.list.d/trivy.list > /dev/null
+
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+      - name: Trivy security gate (HIGH + CRITICAL)
+        run: |
+          trivy image \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            --ignorefile .trivyignore \
+            --no-progress \
+            bootc-postgres:test
+
+      - name: Validate Trivy waiver documentation
+        run: |
+          while read cve; do
+            if ! grep -q "$cve" trivy-waiver-documentation.md; then
+              echo "CVE $cve is ignored but not documented!"
+              exit 1
+            fi
+          done < .trivyignore
+
+      - name: Generate Trivy report
+        if: always()
+        run: |
+          trivy image \
+            --severity HIGH,CRITICAL \
+            --ignorefile .trivyignore \
+            --format table \
+            --output trivy-report.txt \
+            bootc-postgres:test
+
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: trivy-report.txt
