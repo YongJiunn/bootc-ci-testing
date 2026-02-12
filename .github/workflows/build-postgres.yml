@@ -50,7 +50,6 @@ jobs:
       - name: Save image as OCI archive
         run: |
           podman save \
-            --format oci-archive \
             -o bootc-postgres.tar \
             bootc-postgres:test
 
