@@ -88,9 +88,15 @@ jobs:
 
       - name: Validate Trivy waiver documentation
         run: |
-          while read cve; do
-            if ! grep -q "$cve" trivy-waiver-documentation.md; then
-              echo "CVE $cve is ignored but not documented!"
+          while read -r cve; do
+            # Skip comments and empty lines
+            [[ -z "$cve" || "$cve" =~ ^# ]] && continue
+            
+            # Trim whitespace
+            cve=$(echo "$cve" | xargs)
+            
+            if ! grep -q "$cve" reports/trivy/trivy-waiver-documentation.md; then
+              echo "CVE $cve is ignored but not documented in reports/trivy/trivy-waiver-documentation.md!"
               exit 1
             fi
           done < .trivyignore
