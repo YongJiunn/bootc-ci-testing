@@ -4,6 +4,20 @@ This document outlines the Trivy waivers required for the deployment of CentOS S
 
 > Only those that are flagged out as "High" in the [trivy report](./trivy-report.txt) will be highlighted here.
 
+# Approved waivers – see trivy-waiver-documentation.md
+
+CVE-2025-58183
+CVE-2025-58186
+CVE-2025-58187
+CVE-2025-47907
+CVE-2025-52881
+CVE-2025-68121
+CVE-2025-61726 
+CVE-2025-61728
+CVE-2025-61729
+CVE-2025-61730
+CVE-2025-66506
+
 # Deployment
 
 This waiver documentation is applicable for all variants of CS9 OS deployed as a BootC VM.
