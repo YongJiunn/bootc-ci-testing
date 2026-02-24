@@ -148,21 +148,21 @@ jobs:
           podman push "ghcr.io/${OWNER}/bootc-postgres:${VERSION}"
           podman push "ghcr.io/${OWNER}/bootc-postgres:sha-${SHA}"
 
-      - name: Install Cosign (keyless)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: sigstore/cosign-installer@v3
+      # - name: Install Cosign (keyless)
+      #   if: startsWith(github.ref, 'refs/tags/v')
+      #   uses: sigstore/cosign-installer@v3
 
-      - name: Cosign keyless sign (semver + sha tags)
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          COSIGN_EXPERIMENTAL: "true"
-        run: |
-          VERSION="${GITHUB_REF#refs/tags/}"
-          SHA="${GITHUB_SHA::7}"
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+      # - name: Cosign keyless sign (semver + sha tags)
+      #   if: startsWith(github.ref, 'refs/tags/v')
+      #   env:
+      #     COSIGN_EXPERIMENTAL: "true"
+      #   run: |
+      #     VERSION="${GITHUB_REF#refs/tags/}"
+      #     SHA="${GITHUB_SHA::7}"
+      #     OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
 
-          cosign sign --yes "ghcr.io/${OWNER}/bootc-postgres:${VERSION}"
-          cosign sign --yes "ghcr.io/${OWNER}/bootc-postgres:sha-${SHA}"
+      #     cosign sign --yes "ghcr.io/${OWNER}/bootc-postgres:${VERSION}"
+      #     cosign sign --yes "ghcr.io/${OWNER}/bootc-postgres:sha-${SHA}"
 
       - name: Build ISO (bootc-image-builder)
         if: startsWith(github.ref, 'refs/tags/v')
