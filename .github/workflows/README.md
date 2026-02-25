@@ -131,7 +131,7 @@ The signature is tied to:
 
 “Image is verifiably produced by this CI workflow under this repository at this commit.”
 
-That’s supply chain provenance.
+That’s supply chain provenance and maturity and integrity. 
 
 ## Supply Chain Terms
 
@@ -201,5 +201,80 @@ Verification will:
 - Fail
 
 Because signature only exists for original digest.
+
+Tampering becomes detectable.
+
+## What Cosign Attestation Actually Does
+
+When you run:
+
+```
+cosign attest \
+  --predicate sbom.json \
+  --type cyclonedx \
+  ghcr.io/...@sha256:abc123
+```
+
+Cosign:
+1. Takes sbom.json
+2. Wraps it in in-toto format
+3. Signs it with your OIDC identity
+4. Uploads it as OCI artifact
+5. Logs it in Rekor transparency log
+
+Now the registry contains:
+
+1. Image
+2. Signature
+3. SBOM attestation
+
+All cryptographically linked.
+
+## Ideal release pipeline
+
+Build image
+↓
+Trivy gate
+↓
+Push to GHCR
+↓
+Resolve digest
+↓
+Generate SBOM (from digest)
+↓
+Cosign sign image
+↓
+Cosign attest SBOM
+↓
+Verify signature (optional hard gate) and Verify SBOm attestation
+↓
+Build ISO
+↓
+Upload ISO + SBOM to release
+
+
+# What attestation protects against
+
+SBOM belongs:
+
+After image push
+Before ISO build
+Before final release
+
+Because it must describe the immutable image you are releasing. cryptographically bind: SBOM, Image digest, CI identity
+
+Without attestation:
+
+Someone could:
+
+1. Replace SBOM file in release page.
+2. Upload fake SBOM.
+3. Claim compliance falsely.
+
+With attestation:
+
+1. SBOM must match image digest.
+2. SBOM must match CI identity.
+3. SBOM must exist in registry as signed artifact.
 
 Tampering becomes detectable.

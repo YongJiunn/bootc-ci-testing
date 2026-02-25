@@ -148,6 +148,8 @@ jobs:
           podman push "ghcr.io/${OWNER}/bootc-postgres:${VERSION}"
           podman push "ghcr.io/${OWNER}/bootc-postgres:sha-${SHA}"
 
+     #  Generate SBOM from pushed image digest
+
       # - name: Install Cosign (keyless)
       #   if: startsWith(github.ref, 'refs/tags/v')
       #   uses: sigstore/cosign-installer@v3
@@ -164,7 +166,8 @@ jobs:
       #     cosign sign --yes "ghcr.io/${OWNER}/bootc-postgres:${VERSION}"
       #     cosign sign --yes "ghcr.io/${OWNER}/bootc-postgres:sha-${SHA}"
 
-
+      # Cosign attest SBOM
+      
       # - name: Cosign verify (semver + sha tags)
       #   if: startsWith(github.ref, 'refs/tags/v')
       #   run: |
