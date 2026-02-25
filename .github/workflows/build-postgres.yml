@@ -173,13 +173,12 @@ jobs:
 
           mkdir -p output
 
-          podman run --rm \
+          sudo podman run --rm \
             --name postgres-bootc-image-builder \
             --tty \
             --privileged \
             --security-opt label=type:unconfined_t \
             -v "${PWD}/output:/output" \
-            -v /var/lib/containers/storage:/var/lib/containers/storage \
             -v "${PWD}/image.toml:/config.toml:ro" \
             --label bootc.image.builder=true \
             quay.io/centos-bootc/bootc-image-builder:latest \
