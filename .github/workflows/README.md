@@ -76,3 +76,130 @@ Cosign adds:
 Cryptographic identity binding between your CI pipeline and that specific image digest.
 ```
 
+## What does Cosign actually signs?
+
+Cosign does NOT sign the tag.
+
+It signs the digest. Eg: ghcr.io/yongjiun/bootc-postgres@sha256:abc123...
+
+This creates:
+- A signature object
+- Stored back into GHCR
+- Associated with that exact digest 
+
+Now the image becomes: Verifiably produced by our GitHub workflow identity. 
+
+## What threat model does Cosign protects against?
+
+Without Cosign:
+
+If someone:
+- Pushes malicious image with same tag
+- Compromises registry account
+- Replaces image in GHCR
+- Modifies CI pipeline later
+
+Your ISO build will blindly consume that image.
+
+With Cosign:
+
+The image must:
+
+- Have valid signature
+- Match GitHub OIDC identity
+- Match expected workflow
+- Match expected repo
+
+Otherwise ISO step fails.
+
+## How does cosign signing works?
+1. Requests OIDC identity from GitHub
+2. Generates ephemeral key pair
+3. Gets certificate from Sigstore
+4. Signs image digest
+5. Uploads signature to GHCR
+6. Logs entry in transparency log (Rekor)
+
+This means:
+
+The signature is tied to:
+
+1. Your repository
+2. Your workflow run
+3. Your commit SHA
+4. GitHub identity
+
+“Image is verifiably produced by this CI workflow under this repository at this commit.”
+
+That’s supply chain provenance.
+
+## Supply Chain Terms
+
+Without Cosign:
+
+- You have artifact storage.
+
+With Cosign:
+
+- You have artifact authenticity.
+- You have non-repudiation.
+- You have tamper detection.
+- You have identity binding.
+
+This is what makes your pipeline enterprise-grade.
+
+## Phase 1:
+
+1. Build
+2. Scan
+3. Validate
+
+## Phase 2 (Release Tag):
+
+1. Push image
+2. Resolve digest
+3. Cosign sign digest
+4. Cosign verify digest
+5. Pull image
+6. Build ISO
+7. Attach ISO to release
+
+Cosign becomes the trust anchor.
+
+GHCR:
+Stores artifact.
+
+Cosign:
+Binds artifact to trusted identity.
+
+ISO build:
+Derives secondary artifact from trusted primary artifact.
+
+The correct order is:
+
+Push → Sign → Verify → Consume
+
+What you created is:
+
+A cryptographic proof that this exact image digest was signed by this GitHub workflow identity.
+
+Not by your laptop.
+Not by a random user.
+By your CI identity.
+
+## What Happens If Someone Tampered With Image?
+
+Suppose attacker:
+
+- Pushes malicious image under same tag
+- Rewrites tag to new digest
+
+Verification will:
+
+- Resolve new digest
+- Try to find signature for that digest
+- Fail
+
+Because signature only exists for original digest.
+
+Tampering becomes detectable.
