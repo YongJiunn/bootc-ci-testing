@@ -173,7 +173,7 @@ jobs:
 
           mkdir -p output
 
-          sudo podman run --rm \
+          podman run --rm \
             --name postgres-bootc-image-builder \
             --tty \
             --privileged \
