@@ -49,7 +49,7 @@ jobs:
     strategy:
       matrix:    # Define your variants here, 
       # GitHub will dynamically spin up three completely separate runners for this job, building all three variants in parallel.
-        variant: [postgres, mysql, redis] 
+        variant: [postgres] 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -122,17 +122,58 @@ jobs:
         run: |
           trivy image \
             --severity HIGH,CRITICAL \
-            --ignorefile .trivyignore \
             --format table \
             --output trivy-report.txt \
             --input bootc-${{ matrix.variant }}.tar
 
-      - name: Upload Trivy report
+      - name: Generate Blank SFR
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          cat << 'EOF' > sfr-report.toml
+          [report.details]
+          name =
+          type =
+          date = 
+
+          [report.software.image]
+          image_source = 
+          full_image_tag = 
+
+          [report.software.general]
+          language =  ""
+          works_offline = ""
+          add_scripting_capabilities = ""
+          require_elevated_cluster_privileges = ""
+          external_dependencies = ""
+          support_prometheus_monitoring = ""
+          configuration_mgmt_requirements = ""
+          others = ""
+
+          [report.software.opensource]      # if open-source
+          reputation = ""
+          source_code_url = ""
+          updates = ""      # ignore if self-built
+          community_support = ""
+          cis-benchmark = ""      # NA | Applied | Applied with exceptions , pls submit supporting
+
+          [report.software.closedsource]      # if closed-source
+          reputation = ""
+          updates = ""
+          cis-benchmark = ""
+
+          [report.software.va.urllib3]
+          CVE-2025-XXXX = { expires_on = "", justification = "" }
+          CVE-2025-XXXX = { expires_on = "", justification = "" }
+          EOF
+
+      - name: Upload Security Reports
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
-          name: trivy-report
-          path: trivy-report.txt
+          name: security-reports-${{ matrix.variant }}
+          path: |
+            trivy-report.txt
+            sfr-report.toml
 
       # -------------------------
       # RELEASE-ONLY: Publish + Sign + ISO
