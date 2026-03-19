@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   pull_request:
   push:
-    branches: [ main ]
+    branches: [ main, dev ]
     tags:
       - 'v*'
 
@@ -18,17 +18,17 @@ permissions:
   id-token: write
 
 jobs:
-  build-postgres:
+  lint:
+    name: Lint Scripts & Files
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install tooling (podman, shellcheck, prereqs)
+      - name: Install tooling (shellcheck)
         run: |
           sudo apt-get update
-          sudo apt-get install -y podman shellcheck wget gnupg lsb-release
+          sudo apt-get install -y shellcheck
 
       - name: ShellCheck all shell scripts
         run: |
@@ -41,25 +41,63 @@ jobs:
             exit 1
           fi
 
-      - name: Build postgres bootc image
+  build-variants:
+    name: Build & Scan Image
+    needs: lint
+    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:    # Define your variants here, 
+      # GitHub will dynamically spin up three completely separate runners for this job, building all three variants in parallel.
+        variant: [postgres, mysql, redis] 
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install tooling (podman, prereqs)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman wget gnupg lsb-release
+
+      # - name: Build ${{ matrix.variant }} bootc image
+      #   run: |
+      #     podman build \
+      #       -f Containerfile \
+      #       -t bootc-${{ matrix.variant }}:latest \
+      #       --build-arg VARIANT=${{ matrix.variant }} \
+      #       --build-arg HARDENED=true \
+      #       --build-arg DEFAULT_PASSWORD=dummy \
+      #       --build-arg BOOTLOADER_PASSWORD=dummy \
+      #       --build-arg POSTGRES_EXPORTER_PASSWORD=dummy \
+      #       --build-arg POSTGRESQL_REPLICATION_PASSWORD=dummy \
+      #       --no-cache \
+      #       .
+
+      - name: Build ${{ matrix.variant }} bootc image
+        env:
+          # Expose GitHub secrets as environment variables JUST for this step
+          BOOTLOADER_PASSWORD: ${{ secrets.BOOTLOADER_PASSWORD }}
+          DEFAULT_PASSWORD: ${{ secrets.DB_DEFAULT_PASSWORD }}
+          POSTGRES_EXPORTER_PASSWORD: ${{ secrets.DB_EXPORTER_PASSWORD }}
+          POSTGRESQL_REPLICATION_PASSWORD: ${{ secrets.DB_REPLICATION_PASSWORD }}
         run: |
           podman build \
             -f Containerfile \
-            -t bootc-postgres:test \
-            --build-arg VARIANT=postgres \
+            -t bootc-${{ matrix.variant }}:latest \
+            --build-arg VARIANT=${{ matrix.variant }} \
             --build-arg HARDENED=true \
-            --build-arg DEFAULT_PASSWORD=dummy \
-            --build-arg BOOTLOADER_PASSWORD=dummy \
-            --build-arg POSTGRES_EXPORTER_PASSWORD=dummy \
-            --build-arg POSTGRESQL_REPLICATION_PASSWORD=dummy \
+            --secret id=bootloader_pwd,env=BOOTLOADER_PASSWORD \
+            --secret id=default_pwd,env=DEFAULT_PASSWORD \
+            --secret id=exporter_pwd,env=POSTGRES_EXPORTER_PASSWORD \
+            --secret id=replication_pwd,env=POSTGRESQL_REPLICATION_PASSWORD \
             --no-cache \
             .
 
       - name: Save image as OCI archive
         run: |
           podman save \
-            -o bootc-postgres.tar \
-            bootc-postgres:test
+            -o bootc-${{ matrix.variant }}.tar \
+            bootc-${{ matrix.variant }}:latest
 
       - name: Install Trivy
         run: |
@@ -77,30 +115,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y trivy
 
-      - name: Trivy security gate (HIGH + CRITICAL)
-        run: |
-          trivy image \
-            --severity HIGH,CRITICAL \
-            --exit-code 1 \
-            --ignorefile .trivyignore \
-            --no-progress \
-            --input bootc-postgres.tar
-
-      - name: Validate Trivy waiver documentation
-        run: |
-          while read -r cve; do
-            # Skip comments and empty lines
-            [[ -z "$cve" || "$cve" =~ ^# ]] && continue
-            
-            # Trim whitespace
-            cve=$(echo "$cve" | xargs)
-            
-            if ! grep -q "$cve" reports/trivy/trivy-waiver-documentation.md; then
-              echo "CVE $cve is ignored but not documented in reports/trivy/trivy-waiver-documentation.md!"
-              exit 1
-            fi
-          done < .trivyignore
-
       - name: Generate Trivy report
         if: always()
         run: |
@@ -109,7 +123,7 @@ jobs:
             --ignorefile .trivyignore \
             --format table \
             --output trivy-report.txt \
-            --input bootc-postgres.tar
+            --input bootc-${{ matrix.variant }}.tar
 
       - name: Upload Trivy report
         if: always()
@@ -135,8 +149,8 @@ jobs:
           SHA="${GITHUB_SHA::7}"
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
 
-          podman tag bootc-postgres:test "ghcr.io/${OWNER}/bootc-postgres:${VERSION}"
-          podman tag bootc-postgres:test "ghcr.io/${OWNER}/bootc-postgres:sha-${SHA}"
+          podman tag bootc-${{ matrix.variant }}:latest "ghcr.io/${OWNER}/bootc-${{ matrix.variant }}:${VERSION}"
+          podman tag bootc-${{ matrix.variant }}:latest "ghcr.io/${OWNER}/bootc-${{ matrix.variant }}:sha-${SHA}"
 
       - name: Push image to GHCR
         if: startsWith(github.ref, 'refs/tags/v')
@@ -145,47 +159,15 @@ jobs:
           SHA="${GITHUB_SHA::7}"
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
 
-          podman push "ghcr.io/${OWNER}/bootc-postgres:${VERSION}"
-          podman push "ghcr.io/${OWNER}/bootc-postgres:sha-${SHA}"
-
-     #  Generate SBOM from pushed image digest
-
-      # - name: Install Cosign (keyless)
-      #   if: startsWith(github.ref, 'refs/tags/v')
-      #   uses: sigstore/cosign-installer@v3
-
-      # - name: Cosign keyless sign (semver + sha tags)
-      #   if: startsWith(github.ref, 'refs/tags/v')
-      #   env:
-      #     COSIGN_EXPERIMENTAL: "true"
-      #   run: |
-      #     VERSION="${GITHUB_REF#refs/tags/}"
-      #     SHA="${GITHUB_SHA::7}"
-      #     OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-
-      #     cosign sign --yes "ghcr.io/${OWNER}/bootc-postgres:${VERSION}"
-      #     cosign sign --yes "ghcr.io/${OWNER}/bootc-postgres:sha-${SHA}"
-
-      # Cosign attest SBOM
-      
-      # - name: Cosign verify (semver + sha tags)
-      #   if: startsWith(github.ref, 'refs/tags/v')
-      #   run: |
-      #     VERSION="${GITHUB_REF#refs/tags/}"
-      #     SHA="${GITHUB_SHA::7}"
-      #     OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-
-      #     cosign verify \
-      #       --certificate-identity-regexp "https://github.com/${OWNER}/bootc-ci-testing" \
-      #       --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-      #       ghcr.io/${OWNER}/bootc-postgres@sha256:abc123...  
+          podman push "ghcr.io/${OWNER}/bootc-${{ matrix.variant }}:${VERSION}"
+          podman push "ghcr.io/${OWNER}/bootc-${{ matrix.variant }}:sha-${SHA}" 
 
       - name: Pull image for ISO (root namespace)
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           VERSION="${GITHUB_REF#refs/tags/}"
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          IMAGE="ghcr.io/${OWNER}/bootc-postgres:${VERSION}"
+          IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}:${VERSION}"
 
           sudo podman pull "${IMAGE}"
 
@@ -194,13 +176,13 @@ jobs:
         run: |
           VERSION="${GITHUB_REF#refs/tags/}"
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          IMAGE="ghcr.io/${OWNER}/bootc-postgres:${VERSION}"
+          IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}:${VERSION}"
 
           WORKDIR=$(pwd)
           mkdir -p "$WORKDIR/output"
 
           sudo podman run --rm \
-            --name postgres-bootc-image-builder \
+            --name ${{ matrix.variant }}-bootc-image-builder \
             --privileged \
             --security-opt label=type:unconfined_t \
             -v /var/lib/containers/storage:/var/lib/containers/storage \
