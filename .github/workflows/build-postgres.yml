@@ -59,23 +59,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y podman wget gnupg lsb-release
 
-      # - name: Build ${{ matrix.variant }} bootc image
-      #   run: |
-      #     podman build \
-      #       -f Containerfile \
-      #       -t bootc-${{ matrix.variant }}:latest \
-      #       --build-arg VARIANT=${{ matrix.variant }} \
-      #       --build-arg HARDENED=true \
-      #       --build-arg DEFAULT_PASSWORD=dummy \
-      #       --build-arg BOOTLOADER_PASSWORD=dummy \
-      #       --build-arg POSTGRES_EXPORTER_PASSWORD=dummy \
-      #       --build-arg POSTGRESQL_REPLICATION_PASSWORD=dummy \
-      #       --no-cache \
-      #       .
-
       - name: Build ${{ matrix.variant }} bootc image
         env:
-          # Expose GitHub secrets as environment variables JUST for this step
           BOOTLOADER_PASSWORD: ${{ secrets.BOOTLOADER_PASSWORD }}
           DEFAULT_PASSWORD: ${{ secrets.DB_DEFAULT_PASSWORD }}
           POSTGRES_EXPORTER_PASSWORD: ${{ secrets.DB_EXPORTER_PASSWORD }}
