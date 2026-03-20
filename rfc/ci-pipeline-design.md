@@ -15,7 +15,18 @@ The `bootc-service-design` RFC establishes the shift toward building immutable, 
 ![Bootc CI/CD Pipeline architecture](bootc-ci-cd-pipeline-design.png)
 *Figure 1: Bootc CI/CD Pipeline architecture*
 
-To optimize runner execution limits and establish strict security gating, the pipeline is decoupled into three explicit execution phases.
+To optimize runner execution limits and establish strict security gating, the pipeline is decoupled into explicit execution phases powered by a dynamic matrix engine.
+
+### Dynamic Variant Matrix Engine
+Building all VM variants concurrently exhausts CI quotas. Instead, the pipeline utilizes a `setup-matrix` job that intelligently dictates which variants (e.g., `postgres`, `mysql`) are built based on the engineer's intent:
+
+- **During a Pull Request:** The pipeline dynamically parses the PR Body for markdown checkboxes. Engineers can explicitly target the variant they modified by including:
+  ```markdown
+  - [x] postgres
+  - [ ] mysql
+  ```
+  *(If no checkboxes are detected, it safely defaults to building all variants).*
+- **During a Tag Release:** The pipeline parses the tag naming convention. If an engineer pushes `postgres-v1.0.0`, only the `postgres` variant is compiled, scanned, and released. Pushing a generic `v1.0.0` will release all variants.
 
 ### 1. Continuous Integration (`dev` branch)
 To provide rapid feedback without consuming heavy build resources, commits pushed to development branches bypass image compilation.

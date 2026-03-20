@@ -41,15 +41,71 @@ jobs:
             exit 1
           fi
 
+  setup-matrix:
+    name: Determine Variants to Build
+    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    env:
+      PR_BODY: ${{ github.event.pull_request.body }}
+      TAG_NAME: ${{ github.ref_name }}
+      EVENT: ${{ github.event_name }}
+    steps:
+      - name: Calculate Matrix
+        id: set
+        run: |
+          # Supported default list if nothing is specified
+          DEFAULT_MATRIX='["postgres", "mysql", "redis"]'
+          SELECTED="[]"
+
+          if [ "$EVENT" == "pull_request" ]; then
+            echo "Event is Pull Request. Parsing PR body for checkboxes..."
+            
+            # Extracts words following "- [x] " in the PR body. 
+            # Example: "- [x] postgres" -> "postgres"
+            VARIANTS=$(echo "$PR_BODY" | grep -ioE '-\s*\[x\]\s+[a-zA-Z0-9_-]+' | awk '{print $3}' || true)
+            
+            if [ -n "$VARIANTS" ]; then
+              # Convert bash multiline string into a JSON array: ["postgres", "redis"]
+              SELECTED=$(echo "$VARIANTS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+              echo "Parsed variants from PR: $SELECTED"
+            else
+              echo "No checkboxes found. Defaulting to all."
+              SELECTED="$DEFAULT_MATRIX"
+            fi
+
+          elif [[ "$TAG_NAME" == *-v* ]]; then
+            echo "Event is Tag. Parsing tag name..."
+            
+            # Extract everything before '-v' (e.g., 'postgres' from 'postgres-v1.0.0')
+            PREFIX=$(echo "$TAG_NAME" | sed -n 's/^\(.*\)-v[0-9].*/\1/p')
+            
+            if [ -n "$PREFIX" ]; then
+              echo "Found explicit variant prefix: $PREFIX"
+              SELECTED="[\"$PREFIX\"]"
+            else
+              echo "Tag does not specify a variant (e.g., 'v1.0.0'). Defaulting to all."
+              SELECTED="$DEFAULT_MATRIX"
+            fi
+
+          else
+            echo "Standard push or dispatch. Defaulting to all."
+            SELECTED="$DEFAULT_MATRIX"
+          fi
+
+          echo "matrix=$SELECTED" >> $GITHUB_OUTPUT
+
   build-variants:
     name: Build & Scan Image
-    needs: lint
+    needs: [lint, setup-matrix]
     if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
-      matrix:    # Define your variants here, 
-      # GitHub will dynamically spin up three completely separate runners for this job, building all three variants in parallel.
-        variant: [postgres] 
+      fail-fast: false
+      matrix:    
+        # GitHub will dynamically spin up runners for ONLY the variants requested
+        variant: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
