@@ -12,6 +12,9 @@ The `bootc-service-design` RFC establishes the shift toward building immutable, 
 
 ## Pipeline Architecture
 
+![Bootc CI/CD Pipeline architecture](bootc-ci-cd-pipeline-design.png)
+*Figure 1: Bootc CI/CD Pipeline architecture*
+
 To optimize runner execution limits and establish strict security gating, the pipeline is decoupled into three explicit execution phases.
 
 ### 1. Continuous Integration (`dev` branch)
