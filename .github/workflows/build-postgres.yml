@@ -64,7 +64,8 @@ jobs:
             
             # Extracts words following "- [x] " in the PR body. 
             # Example: "- [x] postgres" -> "postgres"
-            VARIANTS=$(echo "$PR_BODY" | grep -ioE '-\s*\[x\]\s+[a-zA-Z0-9_-]+' | awk '{print $3}' || true)
+            # We use '--' to tell grep that the pattern starting with '-' is not an options flag.
+            VARIANTS=$(echo "$PR_BODY" | grep -ioE -- '-\s*\[x\]\s+[a-zA-Z0-9_-]+' | awk '{print $3}' || true)
             
             if [ -n "$VARIANTS" ]; then
               # Convert bash multiline string into a JSON array: ["postgres", "redis"]
