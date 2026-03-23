@@ -161,7 +161,7 @@ jobs:
           
           echo "--- Testing Generic OS Health (Canary Test) ---"
           echo "Checking if the universally installed node_exporter successfully booted..."
-          if podman exec test-boot systemctl is-active node_exporter; then
+          if podman exec test-boot systemctl is-active node-exporter; then
               echo "✅ Canary is alive! The SystemD init chain perfectly executed all the way to user space."
           else
               echo "ERROR: The canary (node_exporter) failed to start! This indicates a catastrophic OS or SystemD failure."
