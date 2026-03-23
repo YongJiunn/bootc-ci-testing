@@ -2,17 +2,15 @@ name: bootc-build-postgres
 
 on:
   workflow_dispatch:
-  pull_request:
   push:
     branches: [ main, dev ]
     tags:
       - '*-v*'
       - 'v*'
+  pull_request:
+    branches: [ main ]
+    types: [opened, synchronize, reopened, closed]
 
-# Required for:
-# - GHCR push: packages:write
-# - Keyless Cosign: id-token:write (OIDC)
-# - Checkout: contents:read
 permissions:
   contents: write
   packages: write
@@ -21,6 +19,7 @@ permissions:
 jobs:
   lint:
     name: Lint Scripts & Files
+    if: github.event.action != 'closed' && !startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -44,75 +43,88 @@ jobs:
 
   setup-matrix:
     name: Determine Variants to Build
-    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
-    env:
-      PR_BODY: ${{ github.event.pull_request.body }}
-      TAG_NAME: ${{ github.ref_name }}
-      EVENT: ${{ github.event_name }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Filter Paths
+        id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            common:
+              - 'Containerfile'
+              - 'build_scripts/common/**'
+            postgres:
+              - 'build_scripts/postgres/**'
+            haproxy:
+              - 'build_scripts/haproxy/**'
+            servicevm:
+              - 'build_scripts/servicevm/**'
+            bastion:
+              - 'build_scripts/bastion/**'
+
       - name: Calculate Matrix
         id: set
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
         run: |
-          # Supported default list if nothing is specified
-          DEFAULT_MATRIX='["postgres", "mysql", "redis"]'
+          DEFAULT_MATRIX='["postgres", "haproxy", "servicevm", "bastion"]'
           SELECTED="[]"
 
           if [ "$EVENT" == "pull_request" ]; then
-            echo "Event is Pull Request. Parsing PR body for checkboxes..."
-            
-            # Extracts words following "- [x] " in the PR body. 
-            # Example: "- [x] postgres" -> "postgres"
-            # We use '--' to tell grep that the pattern starting with '-' is not an options flag.
-            VARIANTS=$(echo "$PR_BODY" | grep -ioE -- '-\s*\[x\]\s+[a-zA-Z0-9_-]+' | awk '{print $3}' || true)
-            
-            if [ -n "$VARIANTS" ]; then
-              # Convert bash multiline string into a JSON array: ["postgres", "redis"]
-              SELECTED=$(echo "$VARIANTS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
-              echo "Parsed variants from PR: $SELECTED"
-            else
-              echo "No checkboxes found. Defaulting to all."
+            echo "Evaluating dorny/paths-filter outputs..."
+            if [ "${{ steps.filter.outputs.common }}" == "true" ]; then
+              echo "Common architecture file modified. Triggering all variants."
               SELECTED="$DEFAULT_MATRIX"
+            else
+              arr=()
+              if [ "${{ steps.filter.outputs.postgres }}" == "true" ]; then arr+=('"postgres"'); fi
+              if [ "${{ steps.filter.outputs.haproxy }}" == "true" ];    then arr+=('"haproxy"'); fi
+              if [ "${{ steps.filter.outputs.servicevm }}" == "true" ];    then arr+=('"servicevm"'); fi
+              if [ "${{ steps.filter.outputs.bastion }}" == "true" ];    then arr+=('"bastion"'); fi
+              
+              if [ ${#arr[@]} -gt 0 ]; then
+                IFS=,; SELECTED="[${arr[*]}]"
+              fi
             fi
-
+            
           elif [[ "$TAG_NAME" == *-v* ]]; then
-            echo "Event is Tag. Parsing tag name..."
-            
-            # Extract everything before '-v' (e.g., 'postgres' from 'postgres-v1.0.0')
             PREFIX=$(echo "$TAG_NAME" | sed -n 's/^\(.*\)-v[0-9].*/\1/p')
-            
             if [ -n "$PREFIX" ]; then
-              echo "Found explicit variant prefix: $PREFIX"
               SELECTED="[\"$PREFIX\"]"
             else
-              echo "Tag does not specify a variant (e.g., 'v1.0.0'). Defaulting to all."
               SELECTED="$DEFAULT_MATRIX"
             fi
-
           else
-            echo "Standard push or dispatch. Defaulting to all."
             SELECTED="$DEFAULT_MATRIX"
           fi
 
+          if [ "$SELECTED" == "[]" ]; then
+             echo "No variants matched by path filter. Matrix will be empty."
+          fi
+          
           echo "matrix=$SELECTED" >> $GITHUB_OUTPUT
 
   build-variants:
-    name: Build & Scan Image
+    name: Build & Test Component
     needs: [lint, setup-matrix]
-    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && needs.setup-matrix.outputs.matrix != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:    
-        # GitHub will dynamically spin up runners for ONLY the variants requested
         variant: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install tooling (podman, prereqs)
+      - name: Install Tooling
         run: |
           sudo apt-get update
           sudo apt-get install -y podman wget gnupg lsb-release
@@ -136,32 +148,101 @@ jobs:
             --no-cache \
             .
 
-      - name: Save image as OCI archive
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Test Systemd OS Boot
         run: |
-          podman save \
-            -o bootc-${{ matrix.variant }}.tar \
-            bootc-${{ matrix.variant }}:latest
+          echo "Booting the immutable container with systemd..."
+          podman run -d --systemd=always --name test-boot bootc-${{ matrix.variant }}:latest
+          
+          echo "Sleeping for 5s to allow kernel/init to boot..."
+          sleep 5
+          
+          echo "Verifying active system state..."
+          podman exec test-boot systemctl is-system-running --wait || true
+          
+          echo "Cleaning up sandbox environment..."
+          podman rm -f -v test-boot
 
-      - name: Install Trivy
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Push PR Artifact Snapshot
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}"
+          
+          podman tag bootc-${{ matrix.variant }}:latest "${IMAGE}:pr-${{ github.event.pull_request.number }}"
+          podman push "${IMAGE}:pr-${{ github.event.pull_request.number }}"
+
+  promote-image:
+    name: Promote Artifact to Latest
+    needs: [setup-matrix]
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && needs.setup-matrix.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
+    steps:
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Promote Tag
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}"
+          
+          echo "Pulling successful PR artifact to promote it..."
+          podman pull "${IMAGE}:pr-${{ github.event.pull_request.number }}"
+          
+          echo "Promoting image to latest tag on main stream..."
+          podman tag "${IMAGE}:pr-${{ github.event.pull_request.number }}" "${IMAGE}:latest"
+          podman push "${IMAGE}:latest"
+
+  release-iso:
+    name: Execute ISO Release
+    needs: [setup-matrix]
+    if: startsWith(github.ref, 'refs/tags/') && needs.setup-matrix.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget gnupg lsb-release
+          sudo apt-get install -y podman wget gnupg lsb-release
 
-          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | \
-            sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
-
-          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] \
-            https://aquasecurity.github.io/trivy-repo/deb \
-            $(lsb_release -sc) main" | \
-            sudo tee /etc/apt/sources.list.d/trivy.list > /dev/null
-
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list > /dev/null
           sudo apt-get update
           sudo apt-get install -y trivy
 
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Pull Promoted Image
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}"
+          
+          echo "Bypassing compilation. Instantly resolving the latest vetted artifact from main..."
+          sudo podman pull "${IMAGE}:latest"
+          
+          # Alias locally for our downstream processes
+          sudo podman tag "${IMAGE}:latest" bootc-${{ matrix.variant }}:latest
+
+      - name: Save image as OCI archive
+        run: |
+          sudo podman save -o bootc-${{ matrix.variant }}.tar bootc-${{ matrix.variant }}:latest
+
       - name: Generate Trivy report
-        if: startsWith(github.ref, 'refs/tags/')
         run: |
           trivy image \
             --severity HIGH,CRITICAL \
@@ -170,7 +251,6 @@ jobs:
             --input bootc-${{ matrix.variant }}.tar
 
       - name: Generate Blank SFR
-        if: startsWith(github.ref, 'refs/tags/')
         run: |
           cat << 'EOF' > sfr-report.toml
           [report.details]
@@ -210,7 +290,6 @@ jobs:
           EOF
 
       - name: Upload Security Reports
-        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v4
         with:
           name: security-reports-${{ matrix.variant }}
@@ -218,47 +297,21 @@ jobs:
             trivy-report.txt
             sfr-report.toml
 
-      # -------------------------
-      # RELEASE-ONLY: Publish + Sign + ISO
-      # -------------------------
-
-      - name: Login to GHCR
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | \
-            podman login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-      - name: Tag image for GHCR (semver + sha)
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Tag and Push Versioned Artifact
         run: |
           VERSION="${GITHUB_REF#refs/tags/}"
           SHA="${GITHUB_SHA::7}"
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}"
 
-          podman tag bootc-${{ matrix.variant }}:latest "ghcr.io/${OWNER}/bootc-${{ matrix.variant }}:${VERSION}"
-          podman tag bootc-${{ matrix.variant }}:latest "ghcr.io/${OWNER}/bootc-${{ matrix.variant }}:sha-${SHA}"
-
-      - name: Push image to GHCR
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |  
-          VERSION="${GITHUB_REF#refs/tags/}"
-          SHA="${GITHUB_SHA::7}"
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-
-          podman push "ghcr.io/${OWNER}/bootc-${{ matrix.variant }}:${VERSION}"
-          podman push "ghcr.io/${OWNER}/bootc-${{ matrix.variant }}:sha-${SHA}" 
-
-      - name: Pull image for ISO (root namespace)
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          VERSION="${GITHUB_REF#refs/tags/}"
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}:${VERSION}"
-
-          sudo podman pull "${IMAGE}"
+          # Append explicit semantic versioning using the sudo daemon
+          sudo podman tag bootc-${{ matrix.variant }}:latest "${IMAGE}:${VERSION}"
+          sudo podman tag bootc-${{ matrix.variant }}:latest "${IMAGE}:sha-${SHA}"
+          
+          sudo podman push "${IMAGE}:${VERSION}"
+          sudo podman push "${IMAGE}:sha-${SHA}"
 
       - name: Build ISO (bootc-image-builder)
-        if: startsWith(github.ref, 'refs/tags/')
         run: |
           VERSION="${GITHUB_REF#refs/tags/}"
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
@@ -282,18 +335,6 @@ jobs:
             --target-arch amd64 \
             --rootfs ext4
 
-      - name: Debug ISO existence
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          echo "Current directory:"
-          pwd
-          echo "Listing workspace:"
-          ls -lah
-          echo "Listing output directory:"
-          ls -lah output || true
-          echo "Searching entire workspace:"
-          find . -name "*.iso" || true
-
       - name: Split ISO for GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         run: |
@@ -306,7 +347,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: output/bootc-${{ matrix.variant }}.iso.part-*
-
+          
 # Once the release is created, the ISO can be downloaded from the release page.
 # The user can then use the following command to merge the ISO parts:
 # cat bootc-postgres.iso.part-* > bootc-postgres.iso

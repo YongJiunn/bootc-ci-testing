@@ -28,9 +28,9 @@ Before any code merges to `main`, it must successfully compile an image. This pr
 - **Execution:** Runs Linters and performs a primary `podman build` of all image variants. 
 - **Branch Protection:** GitHub Branch Protection is enforced on `main`. The "Merge" action is strictly blocked until both the Linter and Build jobs report success. Artifact generation, vulnerability scanning, and release logic are actively excluded here to accelerate the PR feedback loop.
 
-### 3. Release & Tagging (`v*` tags)
+### 3. Release & Tagging (`v*` / `*-v*` tags)
 When code is merged to `main` and a semantic release tag is cut, the pipeline executes the full artifact generation, security auditing, and publishing suite.
-- **Triggers:** Push to `refs/tags/v*`
+- **Triggers:** Push to `refs/tags/`
 - **Execution:**
   1. **Build Image:** Compiles the final container image utilizing GitHub Repository Secrets mounted securely via `--mount=type=secret`.
   2. **Audit:** Executes Trivy severity scans (High/Critical). Generates a vulnerability report and a blank Software Evaluation Report (SFR) required for software compliance.
@@ -40,7 +40,10 @@ When code is merged to `main` and a semantic release tag is cut, the pipeline ex
 
 ## Artifact & Secret Management
 - **Secrets:** Build-time credentials (e.g., database passwords) are never baked into permanent image layers. They are supplied dynamically by GitHub Actions via `podman build --secret` and mounted into memory as `tmpfs` during the image compilation step.
-- **Artifacts:** The pipeline treats the OCI container image as the single source of truth; the bootable ISO is structurally a downstream wrapper around this core container.
+- **Artifacts:** The pipeline completely eliminates `podman build` during the `main` branch and Tag Release workflows by adopting a **Direct Artifact Promotion** model. 
+  1. The image is built precisely once during Pull Request validations (`ghcr.io/owner/image:pr-123`). 
+  2. When the PR successfully merges to `main`, a lightning-fast promotion job tags that exact artifact as `latest`.
+  3. Future Release Tags seamlessly download this identical image, mathematically guaranteeing that the final ISO is built from the exact bits vetted in your PR.
 
 ## Dynamic Variant Matrix Engine
 Building all VM variants concurrently exhausts CI quotas. Instead, the pipeline utilizes a `setup-matrix` job that intelligently dictates which variants (e.g., `postgres`, `mysql`) are built based on the engineer's intent:
