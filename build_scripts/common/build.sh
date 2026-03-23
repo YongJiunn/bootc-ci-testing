@@ -1,7 +1,7 @@
 #!/bin/bash
 set -xeuo pipefail
 
-CONTEXT_PATH="$(realpath "$(dirname "$0")/..")" # should return /run/context
+CONTEXT_PATH="$(realpath "$(dirname "$0")/../..")" # should return /run/context
 BUILD_SCRIPTS_PATH="$(realpath "$(dirname "$0")")"
 
 # copy files from /files to / - merging the files
