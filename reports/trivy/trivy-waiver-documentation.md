@@ -25,7 +25,7 @@ A specially crafted tar archive could cause a Go application to allocate excessi
 
 This vulnerability is **not exploitable** in our BootC image due to the following:
 
-- **The system does not run any Go application code** and no service installed via ```build_scripts/``` uses Go’s ```archive/tar``` package.
+- **The system does not run any Go application code** and no service installed via ```build_scripts/common/``` uses Go’s ```archive/tar``` package.
 
 - **No component in the image processes tar files**.
 
@@ -179,7 +179,7 @@ This vulnerability is not applicable to our BootC Postgres image due to the foll
 - PostgreSQL itself is written in C, not Go.
 Query execution, cancelling, and scanning are entirely handled by the internal database engine and the PostgreSQL wire protocol — none of which call Go code.
 
-- Nothing installed in /build_scripts/ uses Go’s database/sql package.
+- Nothing installed in /build_scripts/common/ uses Go’s database/sql package.
 The system does not run any Go API servers, Go microservices, Go database clients, or Go workers.
 
 - Attack requires the ability to initiate and cancel queries through a Go program. Such a workload does not exist in our deployment architecture

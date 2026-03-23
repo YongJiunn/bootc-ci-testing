@@ -44,7 +44,7 @@ RUN \
  DEFAULT_PASSWORD="$(cat /run/secrets/default_pwd)" \
  POSTGRES_EXPORTER_PASSWORD="$(cat /run/secrets/exporter_pwd)" \
  POSTGRESQL_REPLICATION_PASSWORD="$(cat /run/secrets/replication_pwd)" \
- bash /run/context/build_scripts/build.sh
+ bash /run/context/build_scripts/common/build.sh
  
 # for some reason centos-bootc doesn't have this as its entry point
 ENTRYPOINT /sbin/init
