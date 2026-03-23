@@ -7,7 +7,7 @@ fi
 
 # check for env var that says to harden
 if [ -z "$HARDENED" ] || [ "$HARDENED" = "false" ]; then
-    echo "Not going to harden"
+    echo "Not going to harden!"
     exit 0
 fi
 
