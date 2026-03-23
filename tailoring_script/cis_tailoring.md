@@ -55,7 +55,7 @@ The generated tailoring file is used in two distinct but related stages:
 1. Image hardening (build time)
 
    During image build, the tailoring file is referenced by the hardening scripts
-   (e.g. `build_scripts/39-harden-os-rhel9.sh`) to ensure that the applied
+   (e.g. `build_scripts/common/39-harden-os-rhel9.sh`) to ensure that the applied
    configuration aligns with the intended CIS profile.
 
    This ensures that:

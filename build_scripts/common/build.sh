@@ -94,11 +94,23 @@ else
 fi
 
 
-# run the build scripts in order
+# run the common build scripts in order
 find "${BUILD_SCRIPTS_PATH}" -maxdepth 1 -iname "*-*.sh" -type f -print0 | sort --zero-terminated --sort=human-numeric | while IFS= read -r -d $'\0' script ; do
-    printf "%s" "$(basename "$script")"
+    printf "Executing common script: %s\n" "$(basename "$script")"
     "$(realpath "$script")"
     printf "::endgroup::\n"
 done
+
+# run the variant-specific build scripts in order
+VARIANT_SCRIPTS_PATH="$(realpath "$(dirname "$0")/../${VARIANT}")"
+if [ -d "${VARIANT_SCRIPTS_PATH}" ]; then
+    find "${VARIANT_SCRIPTS_PATH}" -maxdepth 1 -iname "*-*.sh" -type f -print0 | sort --zero-terminated --sort=human-numeric | while IFS= read -r -d $'\0' script ; do
+        printf "Executing variant script: %s\n" "$(basename "$script")"
+        "$(realpath "$script")"
+        printf "::endgroup::\n"
+    done
+else
+    echo "No specific build scripts found for variant: ${VARIANT}"
+fi
 
 "${BUILD_SCRIPTS_PATH}/cleanup.sh"
