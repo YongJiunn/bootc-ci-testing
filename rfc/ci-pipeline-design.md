@@ -2,7 +2,7 @@
 
 | **Metadata**       | **Value**             |
 |--------------------|-----------------------|
-| **Status**         | V1                    |
+| **Status**         | V2 (Path Filtering & PR Promotion) |
 | **Authors**        | @lewyongjiun          |
 | **Created**        | 2026-03-20            |
 
@@ -17,41 +17,42 @@ The `bootc-service-design` RFC establishes the shift toward building immutable, 
 
 To optimize runner execution limits and establish strict security gating, the pipeline is decoupled into explicit execution phases powered by a dynamic matrix engine.
 
-### 1. Continuous Integration (`dev` branch)
+### 1. File Validation (`dev` branch & PRs)
 To provide rapid feedback without consuming heavy build resources, commits pushed to development branches bypass image compilation.
-- **Triggers:** Push to `dev`.
+- **Triggers:** Push to `dev`, PRs, and `main`.
 - **Execution:** Runs static analysis (ShellCheck) and formatting checks (CRLF validation).
 
 ### 2. Pull Request Gating (Shift-Left Validation)
-Before any code merges to `main`, it must successfully compile an image. This prevents broken configurations from polluting the master branch.
-- **Triggers:** Pull Request creation or update.
-- **Execution:** Runs Linters and performs a primary `podman build` of all image variants. 
-- **Branch Protection:** GitHub Branch Protection is enforced on `main`. The "Merge" action is strictly blocked until both the Linter and Build jobs report success. Artifact generation, vulnerability scanning, and release logic are actively excluded here to accelerate the PR feedback loop.
+Before any code merges to `main`, it must successfully compile and boot an image. This prevents broken configurations from polluting the master branch.
+- **Dynamic Build:** The `setup-matrix` job uses `dorny/paths-filter` to detect exactly which folders changed in the PR to strategically build only the affected variants (see explicit examples below).
+- **SystemD Health Canary:** After compiling, the pipeline actually *boots* the image as a background VM (`podman run -d --systemd=always`). It waits 5 seconds and explicitly verifies that the `node-exporter` user-service is running (`systemctl is-active node-exporter`). If the kernel panics or the SystemD init chain crashes before reaching user space, the pipeline fails instantly!
+- **Artifact Caching:** If all tests pass, the artifact is pushed to the registry securely mapped to the PR integer (e.g., `ghcr.io/...:pr-55`).
 
-### 3. Release & Tagging (`v*` / `*-v*` tags)
-When code is merged to `main` and a semantic release tag is cut, the pipeline executes the full artifact generation, security auditing, and publishing suite.
-- **Triggers:** Push to `refs/tags/`
-- **Execution:**
-  1. **Build Image:** Compiles the final container image utilizing GitHub Repository Secrets mounted securely via `--mount=type=secret`.
-  2. **Audit:** Executes Trivy severity scans (High/Critical). Generates a vulnerability report and a blank Software Evaluation Report (SFR) required for software compliance.
-  3. **Publish Container:** Pushes the finalized OCI image to the GitHub Container Registry (GHCR).
-  4. **Build ISO:** Utilizes `bootc-image-builder` to wrap the OCI container into a bootable Anaconda ISO.
-  5. **Release:** Attaches the built ISO, Trivy Report, and SFR file directly to the GitHub Release.
+### 3. Merging to Main (Artifact Promotion)
+The master branch serves as the source of truth, but **we do not compile images on `main`**.
+- **Execution:** When a PR safely merges to `main`, a lightning-fast GitHub Agent runs `podman pull ...:pr-55` (grabbing the exact image vetted in the step above).
+- **Promotion:** It simply tags it as `:latest` and pushes it back up. This guarantees your `:latest` baseline is mathematically identical to what was tested.
+
+### 4. Release & Tagging (`v*` / `*-v*` tags)
+When a semantic release tag is cut on `main`, the pipeline executes the full ISO generation and security auditing suite.
+- **Instant Pull:** It completely bypasses `podman build` and immediately pulls the `:latest` image!
+- **Audit:** Executes Trivy severity scans (High/Critical). Generates a vulnerability report and a blank Software Evaluation Report (SFR) required for software compliance.
+- **ISO Wrap:** Utilizes `bootc-image-builder` to wrap the immutable container into a bootable Anaconda ISO (`.iso.part-*`).
+- **Release:** Attaches the finalized ISO splits, Trivy Report, and SFR file directly to the GitHub Release.
+
+## Dynamic Variant Matrix Engine
+Building all VM variants concurrently exhausts CI quotas. Instead, the pipeline utilizes a powerful `dorny/paths-filter` engine that intelligently dictates exactly which variants (e.g., `postgres`, `haproxy`) are built based on your Git Diff intent:
+
+### Scenario A: Working on a Pull Request
+If an engineer opens a Pull Request modifying variant-specific files, the pipeline automatically senses the intent:
+*   **Example 1:** You edit `build_scripts/postgres/install.sh`. The CI detects the path collision and automatically instructs GitHub Actions to only spin up **1 runner** (`postgres`) to save compute bandwidth.
+*   **Example 2:** You edit `build_scripts/common/11-install-node-exporter.sh` or the root `Containerfile`. Because these are core architectural files, the CI detects a wide-impact change and safely instructs GitHub Actions to spin up **4 runners** to rebuild `postgres`, `haproxy`, `servicevm`, and `bastion` simultaneously!
+
+### Scenario B: Generating a Release Tag
+When cutting a release on `main`, the pipeline explicitly parses your tag naming convention to decide what to wrap into an ISO.
+*   **Targeted Release:** If you push the tag `haproxy-v3.0`, the CI slices the text before the `-v` and intelligently generates purely a **1-variant deployment** for `haproxy`.
+*   **Global Release:** If you push the generic tag `v3.0` (with no prefix), the CI fails to find a specific target and safely defaults to generating **4 simultaneous ISO deployments** for the entire company fleet.
 
 ## Artifact & Secret Management
 - **Secrets:** Build-time credentials (e.g., database passwords) are never baked into permanent image layers. They are supplied dynamically by GitHub Actions via `podman build --secret` and mounted into memory as `tmpfs` during the image compilation step.
-- **Artifacts:** The pipeline completely eliminates `podman build` during the `main` branch and Tag Release workflows by adopting a **Direct Artifact Promotion** model. 
-  1. The image is built precisely once during Pull Request validations (`ghcr.io/owner/image:pr-123`). 
-  2. When the PR successfully merges to `main`, a lightning-fast promotion job tags that exact artifact as `latest`.
-  3. Future Release Tags seamlessly download this identical image, mathematically guaranteeing that the final ISO is built from the exact bits vetted in your PR.
-
-## Dynamic Variant Matrix Engine
-Building all VM variants concurrently exhausts CI quotas. Instead, the pipeline utilizes a `setup-matrix` job that intelligently dictates which variants (e.g., `postgres`, `mysql`) are built based on the engineer's intent:
-
-- **During a Pull Request:** The pipeline dynamically parses the PR Body for markdown checkboxes. Engineers can explicitly target the variant they modified by including:
-  ```markdown
-  - [x] postgres
-  - [ ] mysql
-  ```
-  *(If no checkboxes are detected, it safely defaults to building all variants).*
-- **During a Tag Release:** The pipeline parses the tag naming convention. If an engineer pushes `postgres-v1.0.0`, only the `postgres` variant is compiled, scanned, and released. Pushing a generic `v1.0.0` will release all variants.
+- **Immutability Guarantee:** Because the Artifact Promotion strategy (described in phase 3) forces Release deployments to inherently reference identical layer hashes tested in the original Pull Request, there is absolutely zero risk of upstream `apt`/`yum` dependency drift occurring between the time a PR is evaluated and the week a deployment tag is ultimately cut!
