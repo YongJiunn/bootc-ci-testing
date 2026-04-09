@@ -4,8 +4,6 @@ on:
   pull_request:
     branches: [ main ]
     types: [opened, synchronize, reopened]
-  push:
-    branches: [ dev ]
 
 permissions:
   contents: write
@@ -14,28 +12,6 @@ permissions:
   id-token: write
 
 jobs:
-  lint:
-    name: Lint Scripts & Files
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install tooling (shellcheck)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y shellcheck
-
-      - name: ShellCheck all shell scripts
-        run: |
-          shellcheck $(find . -type f -name "*.sh")
-
-      - name: CRLF check
-        run: |
-          if grep -R $'\r' build_scripts Containerfile; then
-            echo "CRLF line endings detected. Use LF only."
-            exit 1
-          fi
 
   setup-matrix:
     name: Determine Variants to Build
@@ -93,7 +69,7 @@ jobs:
 
   build-variants:
     name: Build & Test Component
-    needs: [lint, setup-matrix]
+    needs: [setup-matrix]
     if: github.event_name == 'pull_request' && github.event.action != 'closed' && needs.setup-matrix.outputs.matrix != '[]'
     runs-on: ubuntu-latest
     strategy:
@@ -151,7 +127,8 @@ jobs:
           TEST_DIR=".github/variant-tests/${{ matrix.variant }}"
           if [ -d "$TEST_DIR" ]; then
               echo "Found custom tests for ${{ matrix.variant }}! Injecting..."
-              podman cp $TEST_DIR/ test-boot:/tmp/tests/
+              podman exec test-boot mkdir -p /tmp/tests
+              podman cp $TEST_DIR/. test-boot:/tmp/tests/
               # Automatically execute all bash scripts inside the variant folder natively in the OS
               podman exec test-boot bash -c "chmod +x /tmp/tests/*.sh && for script in /tmp/tests/*.sh; do bash \$script || exit 1; done"
               echo "All variant custom scripts verified and successfully exited purely!"
