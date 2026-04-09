@@ -94,7 +94,7 @@ jobs:
   build-variants:
     name: Build & Test Component
     needs: [lint, setup-matrix]
-    if: needs.setup-matrix.outputs.matrix != '[]'
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && needs.setup-matrix.outputs.matrix != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

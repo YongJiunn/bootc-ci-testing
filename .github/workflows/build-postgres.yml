@@ -1,379 +1,379 @@
-name: bootc-build-postgres
+# name: bootc-build-postgres
 
-on:
-  workflow_dispatch:
-  push:
-    branches: [ main, dev ]
-    tags:
-      - '*-v*'
-      - 'v*'
-  pull_request:
-    branches: [ main ]
-    types: [opened, synchronize, reopened, closed]
+# on:
+#   workflow_dispatch:
+#   push:
+#     branches: [ main, dev ]
+#     tags:
+#       - '*-v*'
+#       - 'v*'
+#   pull_request:
+#     branches: [ main ]
+#     types: [opened, synchronize, reopened, closed]
 
-permissions:
-  contents: write
-  pull-requests: read
-  packages: write
-  id-token: write
+# permissions:
+#   contents: write
+#   pull-requests: read
+#   packages: write
+#   id-token: write
 
-jobs:
-  lint:
-    name: Lint Scripts & Files
-    if: github.event.action != 'closed' && !startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+# jobs:
+#   lint:
+#     name: Lint Scripts & Files
+#     if: github.event.action != 'closed' && !startsWith(github.ref, 'refs/tags/')
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Checkout repository
+#         uses: actions/checkout@v4
 
-      - name: Install tooling (shellcheck)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y shellcheck
+#       - name: Install tooling (shellcheck)
+#         run: |
+#           sudo apt-get update
+#           sudo apt-get install -y shellcheck
 
-      - name: ShellCheck all shell scripts
-        run: |
-          shellcheck $(find . -type f -name "*.sh")
+#       - name: ShellCheck all shell scripts
+#         run: |
+#           shellcheck $(find . -type f -name "*.sh")
 
-      - name: CRLF check
-        run: |
-          if grep -R $'\r' build_scripts Containerfile; then
-            echo "CRLF line endings detected. Use LF only."
-            exit 1
-          fi
+#       - name: CRLF check
+#         run: |
+#           if grep -R $'\r' build_scripts Containerfile; then
+#             echo "CRLF line endings detected. Use LF only."
+#             exit 1
+#           fi
 
-  setup-filters:
-    name: Determine Variants to Build
-    # Only run for PRs
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.pr-matrix.outputs.matrix }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+#   setup-filters:
+#     name: Determine Variants to Build
+#     # Only run for PRs
+#     if: github.event_name == 'pull_request'
+#     runs-on: ubuntu-latest
+#     outputs:
+#       matrix: ${{ steps.pr-matrix.outputs.matrix }}
+#     steps:
+#       - name: Checkout repository
+#         uses: actions/checkout@v4
 
-      - name: Filter Paths
-        id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            common:
-              - 'Containerfile'
-              - 'build_scripts/common/**'
-            postgres:
-              - 'build_scripts/postgres/**'
-            haproxy:
-              - 'build_scripts/haproxy/**'
-            servicevm:
-              - 'build_scripts/servicevm/**'
-            bastion:
-              - 'build_scripts/bastion/**'
+#       - name: Filter Paths
+#         id: filter
+#         uses: dorny/paths-filter@v3
+#         with:
+#           filters: |
+#             common:
+#               - 'Containerfile'
+#               - 'build_scripts/common/**'
+#             postgres:
+#               - 'build_scripts/postgres/**'
+#             haproxy:
+#               - 'build_scripts/haproxy/**'
+#             servicevm:
+#               - 'build_scripts/servicevm/**'
+#             bastion:
+#               - 'build_scripts/bastion/**'
 
-      - name: Build PR Matrix
-        id: pr-matrix
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const all = ["postgres", "haproxy", "servicevm", "bastion"];
-            const isPR = context.eventName === "pull_request";
-            let matrix = [];
+#       - name: Build PR Matrix
+#         id: pr-matrix
+#         uses: actions/github-script@v7
+#         with:
+#           script: |
+#             const all = ["postgres", "haproxy", "servicevm", "bastion"];
+#             const isPR = context.eventName === "pull_request";
+#             let matrix = [];
             
-            if (isPR) {
-              const changed = {
-                common: "${{ steps.filter.outputs.common }}" === "true",
-                postgres: "${{ steps.filter.outputs.postgres }}" === "true",
-                haproxy: "${{ steps.filter.outputs.haproxy }}" === "true",
-                servicevm: "${{ steps.filter.outputs.servicevm }}" === "true",
-                bastion: "${{ steps.filter.outputs.bastion }}" === "true",
-              };
-              matrix = changed.common ? all : all.filter((v) => changed[v]);
-            } else {
-              // For push to main or workflow_dispatch, default to all variants
-              matrix = all;
-            }
+#             if (isPR) {
+#               const changed = {
+#                 common: "${{ steps.filter.outputs.common }}" === "true",
+#                 postgres: "${{ steps.filter.outputs.postgres }}" === "true",
+#                 haproxy: "${{ steps.filter.outputs.haproxy }}" === "true",
+#                 servicevm: "${{ steps.filter.outputs.servicevm }}" === "true",
+#                 bastion: "${{ steps.filter.outputs.bastion }}" === "true",
+#               };
+#               matrix = changed.common ? all : all.filter((v) => changed[v]);
+#             } else {
+#               // For push to main or workflow_dispatch, default to all variants
+#               matrix = all;
+#             }
 
-            if (matrix.length === 0) {
-              core.info("No variants matched by path filter. Matrix will be empty.");
-            }
-            core.setOutput("matrix", JSON.stringify(matrix));
+#             if (matrix.length === 0) {
+#               core.info("No variants matched by path filter. Matrix will be empty.");
+#             }
+#             core.setOutput("matrix", JSON.stringify(matrix));
 
-  setup-tag-matrix:
-    name: Determine Tag Variants
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.tag.outputs.matrix }}
-    steps:
-      - name: Calculate Matrix from Tag
-        id: tag
-        env:
-          TAG_NAME: ${{ github.ref_name }}
-        run: |
-          if [[ "$TAG_NAME" =~ ^(.+)-v[0-9] ]]; then
-            echo "matrix=[\"${BASH_REMATCH[1]}\"]" >> "$GITHUB_OUTPUT"
-          else
-            echo 'matrix=["postgres","haproxy","servicevm","bastion"]' >> "$GITHUB_OUTPUT"
-          fi
+#   setup-tag-matrix:
+#     name: Determine Tag Variants
+#     if: startsWith(github.ref, 'refs/tags/')
+#     runs-on: ubuntu-latest
+#     outputs:
+#       matrix: ${{ steps.tag.outputs.matrix }}
+#     steps:
+#       - name: Calculate Matrix from Tag
+#         id: tag
+#         env:
+#           TAG_NAME: ${{ github.ref_name }}
+#         run: |
+#           if [[ "$TAG_NAME" =~ ^(.+)-v[0-9] ]]; then
+#             echo "matrix=[\"${BASH_REMATCH[1]}\"]" >> "$GITHUB_OUTPUT"
+#           else
+#             echo 'matrix=["postgres","haproxy","servicevm","bastion"]' >> "$GITHUB_OUTPUT"
+#           fi
 
-  build-variants:
-    name: Build & Test Component
-    needs: [lint, setup-filters]
-    if: github.event_name == 'pull_request' && github.event.action != 'closed' && needs.setup-filters.outputs.matrix != '[]'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:    
-        variant: ${{ fromJson(needs.setup-filters.outputs.matrix) }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+#   build-variants:
+#     name: Build & Test Component
+#     needs: [lint, setup-filters]
+#     if: github.event_name == 'pull_request' && github.event.action != 'closed' && needs.setup-filters.outputs.matrix != '[]'
+#     runs-on: ubuntu-latest
+#     strategy:
+#       fail-fast: false
+#       matrix:    
+#         variant: ${{ fromJson(needs.setup-filters.outputs.matrix) }}
+#     steps:
+#       - name: Checkout repository
+#         uses: actions/checkout@v4
 
-      - name: Install Tooling
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y podman wget gnupg lsb-release
+#       - name: Install Tooling
+#         run: |x`
+#           sudo apt-get update
+#           sudo apt-get install -y podman wget gnupg lsb-release
 
-      - name: Build ${{ matrix.variant }} bootc image
-        env:
-          BOOTLOADER_PASSWORD: ${{ secrets.BOOTLOADER_PASSWORD }}
-          DEFAULT_PASSWORD: ${{ secrets.DB_DEFAULT_PASSWORD }}
-          POSTGRES_EXPORTER_PASSWORD: ${{ secrets.DB_EXPORTER_PASSWORD }}
-          POSTGRESQL_REPLICATION_PASSWORD: ${{ secrets.DB_REPLICATION_PASSWORD }}
-        run: |
-          podman build \
-            -f Containerfile \
-            -t bootc-${{ matrix.variant }}:latest \
-            --build-arg VARIANT=${{ matrix.variant }} \
-            --build-arg HARDENED=true \
-            --secret id=bootloader_pwd,env=BOOTLOADER_PASSWORD \
-            --secret id=default_pwd,env=DEFAULT_PASSWORD \
-            --secret id=exporter_pwd,env=POSTGRES_EXPORTER_PASSWORD \
-            --secret id=replication_pwd,env=POSTGRESQL_REPLICATION_PASSWORD \
-            --no-cache \
-            .
+#       - name: Build ${{ matrix.variant }} bootc image
+#         env:
+#           BOOTLOADER_PASSWORD: ${{ secrets.BOOTLOADER_PASSWORD }}
+#           DEFAULT_PASSWORD: ${{ secrets.DB_DEFAULT_PASSWORD }}
+#           POSTGRES_EXPORTER_PASSWORD: ${{ secrets.DB_EXPORTER_PASSWORD }}
+#           POSTGRESQL_REPLICATION_PASSWORD: ${{ secrets.DB_REPLICATION_PASSWORD }}
+#         run: |
+#           podman build \
+#             -f Containerfile \
+#             -t bootc-${{ matrix.variant }}:latest \
+#             --build-arg VARIANT=${{ matrix.variant }} \
+#             --build-arg HARDENED=true \
+#             --secret id=bootloader_pwd,env=BOOTLOADER_PASSWORD \
+#             --secret id=default_pwd,env=DEFAULT_PASSWORD \
+#             --secret id=exporter_pwd,env=POSTGRES_EXPORTER_PASSWORD \
+#             --secret id=replication_pwd,env=POSTGRESQL_REPLICATION_PASSWORD \
+#             --no-cache \
+#             .
 
-      - name: Test Systemd OS Boot
-        run: |
-          echo "Booting the immutable container with systemd..."
-          podman run -d --systemd=always --name test-boot bootc-${{ matrix.variant }}:latest
+#       - name: Test Systemd OS Boot
+#         run: |
+#           echo "Booting the immutable container with systemd..."
+#           podman run -d --systemd=always --name test-boot bootc-${{ matrix.variant }}:latest
           
-          echo "Sleeping for 5s to allow kernel/init to boot..."
-          sleep 5
+#           echo "Sleeping for 5s to allow kernel/init to boot..."
+#           sleep 5
           
-          echo "Verifying active system state..."
-          podman exec test-boot systemctl is-system-running --wait || true
+#           echo "Verifying active system state..."
+#           podman exec test-boot systemctl is-system-running --wait || true
           
-          echo "--- Testing Generic OS Health (Canary Test) ---"
-          echo "Checking if the universally installed node_exporter successfully booted..."
-          if podman exec test-boot systemctl is-active node-exporter; then
-              echo "✅ Canary is alive! The SystemD init chain perfectly executed all the way to user space."
-          else
-              echo "ERROR: The canary (node_exporter) failed to start! This indicates a catastrophic OS or SystemD failure."
-              exit 1
-          fi
+#           echo "--- Testing Generic OS Health (Canary Test) ---"
+#           echo "Checking if the universally installed node_exporter successfully booted..."
+#           if podman exec test-boot systemctl is-active node-exporter; then
+#               echo "✅ Canary is alive! The SystemD init chain perfectly executed all the way to user space."
+#           else
+#               echo "ERROR: The canary (node_exporter) failed to start! This indicates a catastrophic OS or SystemD failure."
+#               exit 1
+#           fi
           
-          echo "Cleaning up sandbox environment..."
-          podman rm -f -v test-boot
+#           echo "Cleaning up sandbox environment..."
+#           podman rm -f -v test-boot
 
-      - name: Login to GHCR
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+#       - name: Login to GHCR
+#         run: |
+#           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Push PR Artifact Snapshot
-        run: |
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}"
+#       - name: Push PR Artifact Snapshot
+#         run: |
+#           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+#           IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}"
           
-          podman tag bootc-${{ matrix.variant }}:latest "${IMAGE}:pr-${{ github.event.pull_request.number }}"
-          podman push "${IMAGE}:pr-${{ github.event.pull_request.number }}"
+#           podman tag bootc-${{ matrix.variant }}:latest "${IMAGE}:pr-${{ github.event.pull_request.number }}"
+#           podman push "${IMAGE}:pr-${{ github.event.pull_request.number }}"
 
-      - name: Save image to tarball
-        run: podman save -o bootc-${{ matrix.variant }}.tar bootc-${{ matrix.variant }}:latest
+#       - name: Save image to tarball
+#         run: podman save -o bootc-${{ matrix.variant }}.tar bootc-${{ matrix.variant }}:latest
 
-      - name: Generate Trivy report
-        run: |
-          trivy image \
-            --severity HIGH,CRITICAL \
-            --format table \
-            --output trivy-report-${{ matrix.variant }}.txt \
-            --input bootc-${{ matrix.variant }}.tar
+#       - name: Generate Trivy report
+#         run: |
+#           trivy image \
+#             --severity HIGH,CRITICAL \
+#             --format table \
+#             --output trivy-report-${{ matrix.variant }}.txt \
+#             --input bootc-${{ matrix.variant }}.tar
 
-      - name: Upload Trivy report as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-report-${{ matrix.variant }}
-          path: trivy-report-${{ matrix.variant }}.txt
+#       - name: Upload Trivy report as artifact
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: trivy-report-${{ matrix.variant }}
+#           path: trivy-report-${{ matrix.variant }}.txt
 
-  promote-image:
-    name: Promote Artifact to Latest
-    needs: [setup-filters]
-    if: github.event.pull_request.merged == true && needs.setup-filters.outputs.matrix != '[]'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: ${{ fromJson(needs.setup-filters.outputs.matrix) }}
-    steps:
-      - name: Login to GHCR
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+#   promote-image:
+#     name: Promote Artifact to Latest
+#     needs: [setup-filters]
+#     if: github.event.pull_request.merged == true && needs.setup-filters.outputs.matrix != '[]'
+#     runs-on: ubuntu-latest
+#     strategy:
+#       fail-fast: false
+#       matrix:
+#         variant: ${{ fromJson(needs.setup-filters.outputs.matrix) }}
+#     steps:
+#       - name: Login to GHCR
+#         run: |
+#           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Promote Tag
-        run: |
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}"
+#       - name: Promote Tag
+#         run: |
+#           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+#           IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}"
           
-          echo "Pulling successful PR artifact to promote it..."
-          podman pull "${IMAGE}:pr-${{ github.event.pull_request.number }}"
+#           echo "Pulling successful PR artifact to promote it..."
+#           podman pull "${IMAGE}:pr-${{ github.event.pull_request.number }}"
           
-          echo "Promoting image to latest tag on main stream..."
-          podman tag "${IMAGE}:pr-${{ github.event.pull_request.number }}" "${IMAGE}:latest"
-          podman push "${IMAGE}:latest"
+#           echo "Promoting image to latest tag on main stream..."
+#           podman tag "${IMAGE}:pr-${{ github.event.pull_request.number }}" "${IMAGE}:latest"
+#           podman push "${IMAGE}:latest"
 
-  release-iso:
-    name: Execute ISO Release
-    needs: [setup-tag-matrix]
-    if: startsWith(github.ref, 'refs/tags/') && needs.setup-tag-matrix.outputs.matrix != '[]'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: ${{ fromJson(needs.setup-tag-matrix.outputs.matrix) }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+#   release-iso:
+#     name: Execute ISO Release
+#     needs: [setup-tag-matrix]
+#     if: startsWith(github.ref, 'refs/tags/') && needs.setup-tag-matrix.outputs.matrix != '[]'
+#     runs-on: ubuntu-latest
+#     strategy:
+#       fail-fast: false
+#       matrix:
+#         variant: ${{ fromJson(needs.setup-tag-matrix.outputs.matrix) }}
+#     steps:
+#       - name: Checkout repository
+#         uses: actions/checkout@v4
 
-      - name: Install Tooling
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y podman wget gnupg lsb-release
+#       - name: Install Tooling
+#         run: |
+#           sudo apt-get update
+#           sudo apt-get install -y podman wget gnupg lsb-release
 
-          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
-          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list > /dev/null
-          sudo apt-get update
-          sudo apt-get install -y trivy
+#           wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+#           echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list > /dev/null
+#           sudo apt-get update
+#           sudo apt-get install -y trivy
 
-      - name: Login to GHCR
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+#       - name: Login to GHCR
+#         run: |
+#           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Pull Promoted Image
-        run: |
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}"
+#       - name: Pull Promoted Image
+#         run: |
+#           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+#           IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}"
           
-          echo "Bypassing compilation. Instantly resolving the latest vetted artifact from main..."
-          sudo podman pull "${IMAGE}:latest"
+#           echo "Bypassing compilation. Instantly resolving the latest vetted artifact from main..."
+#           sudo podman pull "${IMAGE}:latest"
           
-          # Alias locally for our downstream processes
-          sudo podman tag "${IMAGE}:latest" bootc-${{ matrix.variant }}:latest
+#           # Alias locally for our downstream processes
+#           sudo podman tag "${IMAGE}:latest" bootc-${{ matrix.variant }}:latest
 
-      - name: Save image as OCI archive
-        run: |
-          sudo podman save -o bootc-${{ matrix.variant }}.tar bootc-${{ matrix.variant }}:latest
+#       - name: Save image as OCI archive
+#         run: |
+#           sudo podman save -o bootc-${{ matrix.variant }}.tar bootc-${{ matrix.variant }}:latest
 
-      - name: Generate Trivy report
-        run: |
-          trivy image \
-            --severity HIGH,CRITICAL \
-            --format table \
-            --output trivy-report-${{ matrix.variant }}.txt \
-            --input bootc-${{ matrix.variant }}.tar
+#       - name: Generate Trivy report
+#         run: |
+#           trivy image \
+#             --severity HIGH,CRITICAL \
+#             --format table \
+#             --output trivy-report-${{ matrix.variant }}.txt \
+#             --input bootc-${{ matrix.variant }}.tar
 
-      - name: Generate Blank SFR
-        run: |
-          cat << 'EOF' > sfr-report-${{ matrix.variant }}.toml
-          [report.details]
-          name =
-          type =
-          date = 
+#       - name: Generate Blank SFR
+#         run: |
+#           cat << 'EOF' > sfr-report-${{ matrix.variant }}.toml
+#           [report.details]
+#           name =
+#           type =
+#           date = 
 
-          [report.software.image]
-          image_source = 
-          full_image_tag = 
+#           [report.software.image]
+#           image_source = 
+#           full_image_tag = 
 
-          [report.software.general]
-          language =  ""
-          works_offline = ""
-          add_scripting_capabilities = ""
-          require_elevated_cluster_privileges = ""
-          external_dependencies = ""
-          support_prometheus_monitoring = ""
-          configuration_mgmt_requirements = ""
-          others = ""
+#           [report.software.general]
+#           language =  ""
+#           works_offline = ""
+#           add_scripting_capabilities = ""
+#           require_elevated_cluster_privileges = ""
+#           external_dependencies = ""
+#           support_prometheus_monitoring = ""
+#           configuration_mgmt_requirements = ""
+#           others = ""
 
-          [report.software.opensource]      # if open-source
-          reputation = ""
-          source_code_url = ""
-          updates = ""      # ignore if self-built
-          community_support = ""
-          cis-benchmark = ""      # NA | Applied | Applied with exceptions , pls submit supporting
+#           [report.software.opensource]      # if open-source
+#           reputation = ""
+#           source_code_url = ""
+#           updates = ""      # ignore if self-built
+#           community_support = ""
+#           cis-benchmark = ""      # NA | Applied | Applied with exceptions , pls submit supporting
 
-          [report.software.closedsource]      # if closed-source
-          reputation = ""
-          updates = ""
-          cis-benchmark = ""
+#           [report.software.closedsource]      # if closed-source
+#           reputation = ""
+#           updates = ""
+#           cis-benchmark = ""
 
-          [report.software.va.urllib3]
-          CVE-2025-XXXX = { expires_on = "", justification = "" }
-          CVE-2025-XXXX = { expires_on = "", justification = "" }
-          EOF
+#           [report.software.va.urllib3]
+#           CVE-2025-XXXX = { expires_on = "", justification = "" }
+#           CVE-2025-XXXX = { expires_on = "", justification = "" }
+#           EOF
 
-      - name: Tag and Push Versioned Artifact
-        run: |
-          VERSION="${GITHUB_REF#refs/tags/}"
-          SHA="${GITHUB_SHA::7}"
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}"
+#       - name: Tag and Push Versioned Artifact
+#         run: |
+#           VERSION="${GITHUB_REF#refs/tags/}"
+#           SHA="${GITHUB_SHA::7}"
+#           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+#           IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}"
 
-          # Append explicit semantic versioning using the sudo daemon
-          sudo podman tag bootc-${{ matrix.variant }}:latest "${IMAGE}:${VERSION}"
-          sudo podman tag bootc-${{ matrix.variant }}:latest "${IMAGE}:sha-${SHA}"
+#           # Append explicit semantic versioning using the sudo daemon
+#           sudo podman tag bootc-${{ matrix.variant }}:latest "${IMAGE}:${VERSION}"
+#           sudo podman tag bootc-${{ matrix.variant }}:latest "${IMAGE}:sha-${SHA}"
           
-          sudo podman push "${IMAGE}:${VERSION}"
-          sudo podman push "${IMAGE}:sha-${SHA}"
+#           sudo podman push "${IMAGE}:${VERSION}"
+#           sudo podman push "${IMAGE}:sha-${SHA}"
 
-      - name: Build ISO (bootc-image-builder)
-        run: |
-          VERSION="${GITHUB_REF#refs/tags/}"
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}:${VERSION}"
+#       - name: Build ISO (bootc-image-builder)
+#         run: |
+#           VERSION="${GITHUB_REF#refs/tags/}"
+#           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+#           IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}:${VERSION}"
 
-          WORKDIR=$(pwd)
-          mkdir -p "$WORKDIR/output"
+#           WORKDIR=$(pwd)
+#           mkdir -p "$WORKDIR/output"
 
-          sudo podman run --rm \
-            --name ${{ matrix.variant }}-bootc-image-builder \
-            --privileged \
-            --security-opt label=type:unconfined_t \
-            -v /var/lib/containers/storage:/var/lib/containers/storage \
-            -v "$WORKDIR/output:/output" \
-            -v "$WORKDIR/image.toml:/config.toml:ro" \
-            --label bootc.image.builder=true \
-            quay.io/centos-bootc/bootc-image-builder:latest \
-            "${IMAGE}" \
-            --output /output/bootloader.iso \
-            --type anaconda-iso \
-            --target-arch amd64 \
-            --rootfs ext4
+#           sudo podman run --rm \
+#             --name ${{ matrix.variant }}-bootc-image-builder \
+#             --privileged \
+#             --security-opt label=type:unconfined_t \
+#             -v /var/lib/containers/storage:/var/lib/containers/storage \
+#             -v "$WORKDIR/output:/output" \
+#             -v "$WORKDIR/image.toml:/config.toml:ro" \
+#             --label bootc.image.builder=true \
+#             quay.io/centos-bootc/bootc-image-builder:latest \
+#             "${IMAGE}" \
+#             --output /output/bootloader.iso \
+#             --type anaconda-iso \
+#             --target-arch amd64 \
+#             --rootfs ext4
 
-      - name: Split ISO for GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          echo "ISO is too large (GitHub limits to 2GB per file)."
-          echo "Splitting the ISO into 1.9GB chunks..."
-          split -b 1900M output/bootloader.iso/bootiso/install.iso output/bootc-${{ matrix.variant }}.iso.part-
+#       - name: Split ISO for GitHub Release
+#         if: startsWith(github.ref, 'refs/tags/')
+#         run: |
+#           echo "ISO is too large (GitHub limits to 2GB per file)."
+#           echo "Splitting the ISO into 1.9GB chunks..."
+#           split -b 1900M output/bootloader.iso/bootiso/install.iso output/bootc-${{ matrix.variant }}.iso.part-
 
-      - name: Upload ISO to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            output/bootc-${{ matrix.variant }}.iso.part-*
-            trivy-report-${{ matrix.variant }}.txt
-            sfr-report-${{ matrix.variant }}.toml
+#       - name: Upload ISO to GitHub Release
+#         if: startsWith(github.ref, 'refs/tags/')
+#         uses: softprops/action-gh-release@v2
+#         with:
+#           files: |
+#             output/bootc-${{ matrix.variant }}.iso.part-*
+#             trivy-report-${{ matrix.variant }}.txt
+#             sfr-report-${{ matrix.variant }}.toml
           
-# Once the release is created, the ISO can be downloaded from the release page.
-# The user can then use the following command to merge the ISO parts:
-# cat bootc-postgres.iso.part-* > bootc-postgres.iso
+# # Once the release is created, the ISO can be downloaded from the release page.
+# # The user can then use the following command to merge the ISO parts:
+# # cat bootc-postgres.iso.part-* > bootc-postgres.iso
