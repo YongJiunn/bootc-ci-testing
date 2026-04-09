@@ -1,0 +1,35 @@
+name: bootc-lint
+
+on:
+  pull_request:
+    branches: [ main ]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [ dev ]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint Scripts & Files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install tooling (shellcheck)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: ShellCheck all shell scripts
+        run: |
+          shellcheck $(find . -type f -name "*.sh")
+
+      - name: CRLF check
+        run: |
+          if grep -R $'\r' build_scripts Containerfile; then
+            echo "CRLF line endings detected. Use LF only."
+            exit 1
+          fi

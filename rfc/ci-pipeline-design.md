@@ -51,7 +51,7 @@ If an engineer opens a Pull Request modifying variant-specific files, the pipeli
 ### Scenario B: Generating a Release Tag
 When cutting a release on `main`, the pipeline explicitly parses your tag naming convention to decide what to wrap into an ISO.
 *   **Targeted Release:** If you push the tag `haproxy-v3.0`, the CI slices the text before the `-v` and intelligently generates purely a **1-variant deployment** for `haproxy`.
-*   **Global Release:** If you push the generic tag `v3.0` (with no prefix), the CI fails to find a specific target and safely defaults to generating **4 simultaneous ISO deployments** for the entire company fleet.
+*   **Global Release:** If you push the generic tag `v3.0` (with no prefix), the CI fails to find a specific target and safely defaults to generating **4 simultaneous ISO deployments** (for `postgres`, `haproxy`, `servicevm`, and `bastion`) for the entire company fleet.
 
 ## Artifact & Secret Management
 - **Secrets:** Build-time credentials (e.g., database passwords) are never baked into permanent image layers. They are supplied dynamically by GitHub Actions via `podman build --secret` and mounted into memory as `tmpfs` during the image compilation step.

@@ -1,0 +1,93 @@
+name: bootc-merge-promotion
+
+on:
+  pull_request:
+    branches: [ main ]
+    types: [closed]
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: read
+  id-token: write
+
+jobs:
+  setup-matrix:
+    name: Identify Merged Variants
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pr-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Filter Paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            common:
+              - 'Containerfile'
+              - 'build_scripts/common/**'
+            postgres:
+              - 'build_scripts/postgres/**'
+            haproxy:
+              - 'build_scripts/haproxy/**'
+            servicevm:
+              - 'build_scripts/servicevm/**'
+            bastion:
+              - 'build_scripts/bastion/**'
+
+      - name: Build PR Matrix
+        id: pr-matrix
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const all = ["postgres", "haproxy", "servicevm", "bastion"];
+            const isPR = context.eventName === "pull_request";
+            let matrix = [];
+            
+            if (isPR) {
+              const changed = {
+                common: "${{ steps.filter.outputs.common }}" === "true",
+                postgres: "${{ steps.filter.outputs.postgres }}" === "true",
+                haproxy: "${{ steps.filter.outputs.haproxy }}" === "true",
+                servicevm: "${{ steps.filter.outputs.servicevm }}" === "true",
+                bastion: "${{ steps.filter.outputs.bastion }}" === "true",
+              };
+              matrix = changed.common ? all : all.filter(v => changed[v]);
+            } else {
+              matrix = all;
+            }
+
+            if (matrix.length === 0) {
+              core.info("No variants matched by path filter. Matrix will be empty.");
+            }
+            core.setOutput("matrix", JSON.stringify(matrix));
+
+  promote-image:
+    name: Promote Artifact to Latest
+    needs: [setup-matrix]
+    if: needs.setup-matrix.outputs.matrix != '[]' && needs.setup-matrix.outputs.matrix != ''
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
+    steps:
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Promote Tag
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}"
+          
+          echo "Pulling successful PR artifact to promote it..."
+          podman pull "${IMAGE}:pr-${{ github.event.pull_request.number }}"
+          
+          echo "Promoting image to latest tag on main stream..."
+          podman tag "${IMAGE}:pr-${{ github.event.pull_request.number }}" "${IMAGE}:latest"
+          podman push "${IMAGE}:latest"
