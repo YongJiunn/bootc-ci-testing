@@ -1,0 +1,171 @@
+name: bootc-tag-release
+
+on:
+  push:
+    tags:
+      - '*-v*'
+      - 'v*'
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  setup-matrix:
+    name: Determine Target Releases
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - name: Calculate Matrix
+        id: set
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          DEFAULT_MATRIX='["postgres", "haproxy", "servicevm", "bastion"]'
+          SELECTED="[]"
+          
+          if [[ "$TAG_NAME" == *-v* ]]; then
+            PREFIX=$(echo "$TAG_NAME" | sed -n 's/^\(.*\)-v[0-9].*/\1/p')
+            if [ -n "$PREFIX" ]; then
+              SELECTED="[\"$PREFIX\"]"
+            else
+              SELECTED="$DEFAULT_MATRIX"
+            fi
+          else
+            SELECTED="$DEFAULT_MATRIX"
+          fi
+          echo "matrix=$SELECTED" >> $GITHUB_OUTPUT
+
+  release-iso:
+    name: Execute ISO Generation
+    needs: [setup-matrix]
+    if: needs.setup-matrix.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman wget gnupg lsb-release trivy
+
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Pull Promoted Image
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}"
+          sudo podman pull "${IMAGE}:latest"
+          sudo podman tag "${IMAGE}:latest" bootc-${{ matrix.variant }}:latest
+
+      - name: Save image as OCI archive
+        run: sudo podman save -o bootc-${{ matrix.variant }}.tar bootc-${{ matrix.variant }}:latest
+
+      - name: Generate Trivy report
+        run: |
+          trivy image \
+            --severity HIGH,CRITICAL \
+            --format table \
+            --output trivy-report-${{ matrix.variant }}.txt \
+            --input bootc-${{ matrix.variant }}.tar
+
+      - name: Generate Blank SFR
+        run: |
+          cat << 'EOF' > sfr-report-${{ matrix.variant }}.toml
+          [report.details]
+          name =
+          type =
+          date = 
+
+          [report.software.image]
+          image_source = 
+          full_image_tag = 
+
+          [report.software.general]
+          language =  ""
+          works_offline = ""
+          add_scripting_capabilities = ""
+          require_elevated_cluster_privileges = ""
+          external_dependencies = ""
+          support_prometheus_monitoring = ""
+          configuration_mgmt_requirements = ""
+          others = ""
+
+          [report.software.opensource]      
+          reputation = ""
+          source_code_url = ""
+          updates = ""      
+          community_support = ""
+          cis-benchmark = ""      
+
+          [report.software.closedsource]      
+          reputation = ""
+          updates = ""
+          cis-benchmark = ""
+
+          [report.software.va.urllib3]
+          CVE-2025-XXXX = { expires_on = "", justification = "" }
+          EOF
+
+      - name: Tag and Push Versioned Artifact
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          SHA="${GITHUB_SHA::7}"
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}"
+
+          sudo podman tag bootc-${{ matrix.variant }}:latest "${IMAGE}:${VERSION}"
+          sudo podman tag bootc-${{ matrix.variant }}:latest "${IMAGE}:sha-${SHA}"
+          
+          sudo podman push "${IMAGE}:${VERSION}"
+          sudo podman push "${IMAGE}:sha-${SHA}"
+
+      - name: Build ISO (bootc-image-builder)
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}:${VERSION}"
+
+          WORKDIR=$(pwd)
+          mkdir -p "$WORKDIR/output"
+
+          sudo podman run --rm \
+            --name ${{ matrix.variant }}-bootc-image-builder \
+            --privileged \
+            --security-opt label=type:unconfined_t \
+            -v /var/lib/containers/storage:/var/lib/containers/storage \
+            -v "$WORKDIR/output:/output" \
+            -v "$WORKDIR/image.toml:/config.toml:ro" \
+            --label bootc.image.builder=true \
+            quay.io/centos-bootc/bootc-image-builder:latest \
+            "${IMAGE}" \
+            --output /output/bootloader.iso \
+            --type anaconda-iso \
+            --target-arch amd64 \
+            --rootfs ext4
+
+      - name: Split ISO for GitHub Release
+        run: |
+          split -b 1900M output/bootloader.iso/bootiso/install.iso output/bootc-${{ matrix.variant }}.iso.part-
+
+      - name: Upload ISO to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            output/bootc-${{ matrix.variant }}.iso.part-*
+            trivy-report-${{ matrix.variant }}.txt
+            sfr-report-${{ matrix.variant }}.toml

@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: read
   packages: write
   id-token: write
 
@@ -41,18 +42,19 @@ jobs:
             exit 1
           fi
 
-  setup-matrix:
+  setup-filters:
     name: Determine Variants to Build
+    # Only run for PRs
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.set.outputs.matrix }}
+      matrix: ${{ steps.pr-matrix.outputs.matrix }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Filter Paths
         id: filter
-        if: github.event_name == 'pull_request'
         uses: dorny/paths-filter@v3
         with:
           filters: |
@@ -68,58 +70,61 @@ jobs:
             bastion:
               - 'build_scripts/bastion/**'
 
-      - name: Calculate Matrix
-        id: set
+      - name: Build PR Matrix
+        id: pr-matrix
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const all = ["postgres", "haproxy", "servicevm", "bastion"];
+            const isPR = context.eventName === "pull_request";
+            let matrix = [];
+            
+            if (isPR) {
+              const changed = {
+                common: "${{ steps.filter.outputs.common }}" === "true",
+                postgres: "${{ steps.filter.outputs.postgres }}" === "true",
+                haproxy: "${{ steps.filter.outputs.haproxy }}" === "true",
+                servicevm: "${{ steps.filter.outputs.servicevm }}" === "true",
+                bastion: "${{ steps.filter.outputs.bastion }}" === "true",
+              };
+              matrix = changed.common ? all : all.filter((v) => changed[v]);
+            } else {
+              // For push to main or workflow_dispatch, default to all variants
+              matrix = all;
+            }
+
+            if (matrix.length === 0) {
+              core.info("No variants matched by path filter. Matrix will be empty.");
+            }
+            core.setOutput("matrix", JSON.stringify(matrix));
+
+  setup-tag-matrix:
+    name: Determine Tag Variants
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.tag.outputs.matrix }}
+    steps:
+      - name: Calculate Matrix from Tag
+        id: tag
         env:
           TAG_NAME: ${{ github.ref_name }}
-          EVENT: ${{ github.event_name }}
         run: |
-          DEFAULT_MATRIX='["postgres", "haproxy", "servicevm", "bastion"]'
-          SELECTED="[]"
-
-          if [ "$EVENT" == "pull_request" ]; then
-            echo "Evaluating dorny/paths-filter outputs..."
-            if [ "${{ steps.filter.outputs.common }}" == "true" ]; then
-              echo "Common architecture file modified. Triggering all variants."
-              SELECTED="$DEFAULT_MATRIX"
-            else
-              arr=()
-              if [ "${{ steps.filter.outputs.postgres }}" == "true" ]; then arr+=('"postgres"'); fi
-              if [ "${{ steps.filter.outputs.haproxy }}" == "true" ];    then arr+=('"haproxy"'); fi
-              if [ "${{ steps.filter.outputs.servicevm }}" == "true" ];    then arr+=('"servicevm"'); fi
-              if [ "${{ steps.filter.outputs.bastion }}" == "true" ];    then arr+=('"bastion"'); fi
-              
-              if [ ${#arr[@]} -gt 0 ]; then
-                IFS=,; SELECTED="[${arr[*]}]"
-              fi
-            fi
-            
-          elif [[ "$TAG_NAME" == *-v* ]]; then
-            PREFIX=$(echo "$TAG_NAME" | sed -n 's/^\(.*\)-v[0-9].*/\1/p')
-            if [ -n "$PREFIX" ]; then
-              SELECTED="[\"$PREFIX\"]"
-            else
-              SELECTED="$DEFAULT_MATRIX"
-            fi
+          if [[ "$TAG_NAME" =~ ^(.+)-v[0-9] ]]; then
+            echo "matrix=[\"${BASH_REMATCH[1]}\"]" >> "$GITHUB_OUTPUT"
           else
-            SELECTED="$DEFAULT_MATRIX"
+            echo 'matrix=["postgres","haproxy","servicevm","bastion"]' >> "$GITHUB_OUTPUT"
           fi
-
-          if [ "$SELECTED" == "[]" ]; then
-             echo "No variants matched by path filter. Matrix will be empty."
-          fi
-          
-          echo "matrix=$SELECTED" >> $GITHUB_OUTPUT
 
   build-variants:
     name: Build & Test Component
-    needs: [lint, setup-matrix]
-    if: github.event_name == 'pull_request' && github.event.action != 'closed' && needs.setup-matrix.outputs.matrix != '[]'
+    needs: [lint, setup-filters]
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && needs.setup-filters.outputs.matrix != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:    
-        variant: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
+        variant: ${{ fromJson(needs.setup-filters.outputs.matrix) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -183,15 +188,32 @@ jobs:
           podman tag bootc-${{ matrix.variant }}:latest "${IMAGE}:pr-${{ github.event.pull_request.number }}"
           podman push "${IMAGE}:pr-${{ github.event.pull_request.number }}"
 
+      - name: Save image to tarball
+        run: podman save -o bootc-${{ matrix.variant }}.tar bootc-${{ matrix.variant }}:latest
+
+      - name: Generate Trivy report
+        run: |
+          trivy image \
+            --severity HIGH,CRITICAL \
+            --format table \
+            --output trivy-report-${{ matrix.variant }}.txt \
+            --input bootc-${{ matrix.variant }}.tar
+
+      - name: Upload Trivy report as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report-${{ matrix.variant }}
+          path: trivy-report-${{ matrix.variant }}.txt
+
   promote-image:
     name: Promote Artifact to Latest
-    needs: [setup-matrix]
-    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && needs.setup-matrix.outputs.matrix != '[]'
+    needs: [setup-filters]
+    if: github.event.pull_request.merged == true && needs.setup-filters.outputs.matrix != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        variant: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
+        variant: ${{ fromJson(needs.setup-filters.outputs.matrix) }}
     steps:
       - name: Login to GHCR
         run: |
@@ -211,13 +233,13 @@ jobs:
 
   release-iso:
     name: Execute ISO Release
-    needs: [setup-matrix]
-    if: startsWith(github.ref, 'refs/tags/') && needs.setup-matrix.outputs.matrix != '[]'
+    needs: [setup-tag-matrix]
+    if: startsWith(github.ref, 'refs/tags/') && needs.setup-tag-matrix.outputs.matrix != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        variant: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
+        variant: ${{ fromJson(needs.setup-tag-matrix.outputs.matrix) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
