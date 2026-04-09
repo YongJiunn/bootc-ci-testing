@@ -19,6 +19,7 @@ dnf -y install postgis34_"$POSTGRESQL_MAJOR_VERSION"
 # hardening
 dnf -y install pgaudit_"$POSTGRESQL_MAJOR_VERSION" set_user_"$POSTGRESQL_MAJOR_VERSION" pgbackrest
 
+#testing 
 
 # delete repo once installed - otherwise will get a weird gpg key error
 rm /etc/yum.repos.d/pgdg-redhat-all.repo
