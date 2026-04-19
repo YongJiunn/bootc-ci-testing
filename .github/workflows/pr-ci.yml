@@ -128,14 +128,11 @@ jobs:
               echo "Found custom tests for ${{ matrix.variant }}! Injecting..."
               podman exec test-boot mkdir -p /tmp/tests
               podman cp $TEST_DIR/. test-boot:/tmp/tests/
-              # # Automatically execute all bash scripts inside the variant folder natively in the OS
-              # podman exec test-boot bash -c "chmod +x /tmp/tests/*.sh && for script in /tmp/tests/*.sh; do bash \$script || exit 1; done"
-              # echo "All variant custom scripts verified and successfully exited purely!"
-              podman exec test-boot bash -lc "ls -l /opt/postgres/scripts/postgresql-init.sh
-              systemctl list-units '*postgresql*'
-              systemctl status postgresql-init.service postgresql-17.service --no-pager
-              journalctl -u postgresql-init.service -u postgresql-17.service -n 100 --no-pager
-              chmod +x /tmp/tests/*.sh && for script in /tmp/tests/*.sh; do bash \$script || exit 1; done"
+              # Automatically execute all bash scripts inside the variant folder natively in the OS
+              podman exec test-boot bash -c "chmod +x /tmp/tests/*.sh && for script in /tmp/tests/*.sh; do bash \$script || exit 1; done"
+              echo "All variant custom scripts verified and successfully exited purely!"
+              # podman exec test-boot bash -lc "ls -l /opt/postgres/scripts/postgresql-init.sh
+              # chmod +x /tmp/tests/*.sh && for script in /tmp/tests/*.sh; do bash \$script || exit 1; done"
           else
               echo "No custom tests defined for ${{ matrix.variant }}, skipping..."
           fi
