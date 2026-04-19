@@ -2,7 +2,7 @@ name: bootc-pr-ci
 
 on:
   pull_request:
-    branches: [ main ]
+    branches: [main]
     types: [opened, synchronize, reopened]
 
 permissions:
@@ -12,7 +12,6 @@ permissions:
   id-token: write
 
 jobs:
-
   setup-matrix:
     name: Determine Variants to Build
     runs-on: ubuntu-latest
@@ -47,7 +46,7 @@ jobs:
             const all = ["postgres", "haproxy", "servicevm", "bastion"];
             const isPR = context.eventName === "pull_request";
             let matrix = [];
-            
+
             if (isPR) {
               const changed = {
                 common: "${{ steps.filter.outputs.common }}" === "true",
@@ -74,7 +73,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:    
+      matrix:
         variant: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
     steps:
       - name: Checkout repository
@@ -108,12 +107,12 @@ jobs:
         run: |
           echo "Booting the immutable container with systemd..."
           podman run -d --systemd=always --name test-boot bootc-${{ matrix.variant }}:latest
-          
+
           echo "Sleeping for 5s to allow kernel/init to boot..."
           sleep 5
-          
+
           podman exec test-boot systemctl is-system-running --wait || true
-          
+
           echo "--- Testing Generic OS Health (Canary Test) ---"
           if podman exec test-boot systemctl is-active node-exporter; then
               echo "✅ Canary is alive! Init chain perfectly executed."
@@ -126,12 +125,17 @@ jobs:
         run: |
           TEST_DIR=".github/variant-tests/${{ matrix.variant }}"
           if [ -d "$TEST_DIR" ]; then
-              echo "Found custom tests for ${{ matrix.variant }}! Injecting..."
-              podman exec test-boot mkdir -p /tmp/tests
-              podman cp $TEST_DIR/. test-boot:/tmp/tests/
-              # Automatically execute all bash scripts inside the variant folder natively in the OS
-              podman exec test-boot bash -c "chmod +x /tmp/tests/*.sh && for script in /tmp/tests/*.sh; do bash \$script || exit 1; done"
-              echo "All variant custom scripts verified and successfully exited purely!"
+              # echo "Found custom tests for ${{ matrix.variant }}! Injecting..."
+              # podman exec test-boot mkdir -p /tmp/tests
+              # podman cp $TEST_DIR/. test-boot:/tmp/tests/
+              # # Automatically execute all bash scripts inside the variant folder natively in the OS
+              # podman exec test-boot bash -c "chmod +x /tmp/tests/*.sh && for script in /tmp/tests/*.sh; do bash \$script || exit 1; done"
+              # echo "All variant custom scripts verified and successfully exited purely!"
+              podman exec test-boot bash -lc "ls -l /opt/postgres/scripts/postgresql-init.sh
+              systemctl list-units '*postgresql*'
+              systemctl status postgresql-init.service postgresql-17.service --no-pager
+              journalctl -u postgresql-init.service -u postgresql-17.service -n 100 --no-pager
+              chmod +x /tmp/tests/*.sh && for script in /tmp/tests/*.sh; do bash \$script || exit 1; done"
           else
               echo "No custom tests defined for ${{ matrix.variant }}, skipping..."
           fi
@@ -166,6 +170,6 @@ jobs:
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}"
-          
+
           podman tag bootc-${{ matrix.variant }}:latest "${IMAGE}:pr-${{ github.event.pull_request.number }}"
           podman push "${IMAGE}:pr-${{ github.event.pull_request.number }}"
