@@ -125,9 +125,9 @@ jobs:
         run: |
           TEST_DIR=".github/variant-tests/${{ matrix.variant }}"
           if [ -d "$TEST_DIR" ]; then
-              # echo "Found custom tests for ${{ matrix.variant }}! Injecting..."
-              # podman exec test-boot mkdir -p /tmp/tests
-              # podman cp $TEST_DIR/. test-boot:/tmp/tests/
+              echo "Found custom tests for ${{ matrix.variant }}! Injecting..."
+              podman exec test-boot mkdir -p /tmp/tests
+              podman cp $TEST_DIR/. test-boot:/tmp/tests/
               # # Automatically execute all bash scripts inside the variant folder natively in the OS
               # podman exec test-boot bash -c "chmod +x /tmp/tests/*.sh && for script in /tmp/tests/*.sh; do bash \$script || exit 1; done"
               # echo "All variant custom scripts verified and successfully exited purely!"
