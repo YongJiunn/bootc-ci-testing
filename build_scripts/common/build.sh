@@ -93,6 +93,8 @@ else
     rm /usr/lib/systemd/system/postgresql-init.service
 fi
 
+# git stores these as 0644; restore +x so systemd can exec them (mirrors what 11-install-node-exporter.sh does explicitly)
+find /opt -name "*.sh" -type f -exec chmod +x {} \;
 
 # run the common build scripts in order
 find "${BUILD_SCRIPTS_PATH}" -maxdepth 1 -iname "*-*.sh" -type f -print0 | sort --zero-terminated --sort=human-numeric | while IFS= read -r -d $'\0' script ; do

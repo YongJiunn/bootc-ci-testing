@@ -41,7 +41,8 @@ if [ -f "$PGDATA/PG_VERSION" ]; then
 else
   echo "$PGDATA not found. Executing command."
   
-  sudo -u postgres /usr/pgsql-$PGVERSION/bin/initdb -D "$PGDATA"
+#   sudo -u postgres /usr/pgsql-$PGVERSION/bin/initdb -D "$PGDATA"
+    runuser -u postgres -- /usr/pgsql-$PGVERSION/bin/initdb -D "$PGDATA"
 
   # Hard guard: initdb must have completed successfully
   if [ ! -f "$PGDATA/PG_VERSION" ]; then
@@ -87,7 +88,7 @@ else
 
   for cmd in "${commands[@]}"; do
       echo "Running command: $cmd"
-      sudo -u postgres psql -c "$cmd"
+      runuser -u postgres -- psql -c "$cmd"
   done
 fi
 
