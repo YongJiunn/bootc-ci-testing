@@ -2,7 +2,7 @@ name: bootc-merge-promotion
 
 on:
   pull_request:
-    branches: [ main ]
+    branches: [main]
     types: [closed]
 
 permissions:
@@ -47,7 +47,7 @@ jobs:
             const all = ["postgres", "haproxy", "servicevm", "bastion"];
             const isPR = context.eventName === "pull_request";
             let matrix = [];
-            
+
             if (isPR) {
               const changed = {
                 common: "${{ steps.filter.outputs.common }}" === "true",
@@ -84,10 +84,29 @@ jobs:
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}"
-          
+
           echo "Pulling successful PR artifact to promote it..."
           podman pull "${IMAGE}:pr-${{ github.event.pull_request.number }}"
-          
+
           echo "Promoting image to latest tag on main stream..."
           podman tag "${IMAGE}:pr-${{ github.event.pull_request.number }}" "${IMAGE}:latest"
           podman push "${IMAGE}:latest"
+
+      - name: Delete PR Artifact Tag
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: bootc-${{ matrix.variant }}
+          package-type: container
+          token: ${{ secrets.GITHUB_TOKEN }}
+          delete-only-specific-package-version-names: pr-${{ github.event.pull_request.number }}
+
+      - name: Verify PR Tag Deleted
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER}/bootc-${{ matrix.variant }}:pr-${{ github.event.pull_request.number }}"
+          if podman pull "${IMAGE}" 2>/dev/null; then
+            echo "ERROR: PR tag still exists after deletion!"
+            exit 1
+          else
+            echo "PR tag confirmed deleted"
+          fi

@@ -131,8 +131,6 @@ jobs:
               # Automatically execute all bash scripts inside the variant folder natively in the OS
               podman exec test-boot bash -c "chmod +x /tmp/tests/*.sh && for script in /tmp/tests/*.sh; do bash \$script || exit 1; done"
               echo "All variant custom scripts verified and successfully exited purely!"
-              # podman exec test-boot bash -lc "ls -l /opt/postgres/scripts/postgresql-init.sh
-              # chmod +x /tmp/tests/*.sh && for script in /tmp/tests/*.sh; do bash \$script || exit 1; done"
           else
               echo "No custom tests defined for ${{ matrix.variant }}, skipping..."
           fi
