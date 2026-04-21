@@ -93,12 +93,22 @@ jobs:
           podman push "${IMAGE}:latest"
 
       - name: Delete PR Artifact Tag
-        uses: actions/delete-package-versions@v5
-        with:
-          package-name: bootc-${{ matrix.variant }}
-          package-type: container
-          token: ${{ secrets.GITHUB_TOKEN }}
-          delete-only-specific-package-version-names: pr-${{ github.event.pull_request.number }}
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          PR_TAG="pr-${{ github.event.pull_request.number }}"
+          PACKAGE="bootc-${{ matrix.variant }}"
+
+          VERSION_ID=$(gh api "/users/${OWNER}/packages/container/${PACKAGE}/versions" \
+            --jq ".[] | select(.metadata.container.tags[] == \"${PR_TAG}\") | .id")
+
+          if [ -n "$VERSION_ID" ]; then
+            gh api --method DELETE "/user/packages/container/${PACKAGE}/versions/${VERSION_ID}"
+            echo "Deleted tag ${PR_TAG} (version id: ${VERSION_ID})"
+          else
+            echo "Tag ${PR_TAG} not found, skipping"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify PR Tag Deleted
         run: |

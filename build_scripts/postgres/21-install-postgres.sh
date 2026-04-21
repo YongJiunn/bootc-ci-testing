@@ -5,7 +5,7 @@ if [ -n "$VARIANT" ] && [ "$VARIANT" != "postgres" ]; then
     exit 0;
 fi
 
-# configure repo rpm
+# configure repo rpmm
 dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-"$EL_VERSION"-"$ARCH"/pgdg-redhat-repo-latest.noarch.rpm
 
 # install postgresql (e.g. postgresql15-server-15.5-1PGDG.rhel9.x86_64)
