@@ -1,10 +1,24 @@
 # BootC CI/CD Pipeline Service Design
 
-| **Metadata** | **Value**                                    |
-| ------------ | -------------------------------------------- |
+| **Metadata** | **Value**                                         |
+| ------------ | ------------------------------------------------- |
 | **Status**   | V3 (Variant Tests, Trivy Shift-Left, Tag Cleanup) |
-| **Authors**  | @lewyongjiun                                 |
-| **Created**  | 2026-03-20                                   |
+| **Authors**  | @lewyongjiun                                      |
+| **Created**  | 2026-03-20                                        |
+
+## Table of Contents
+
+- [Motivation](#motivation)
+- [Understanding the OCI Image in This Pipeline](#understanding-the-oci-image-in-this-pipeline)
+- [Pipeline Architecture](#pipeline-architecture)
+- [Phase 1: File Validation](#phase-1-file-validation-dev-branch--prs)
+- [Phase 2: Pull Request Gating](#phase-2-pull-request-gating-shift-left-validation)
+- [Phase 3: Merging to Main](#phase-3-merging-to-main-artifact-promotion)
+- [Phase 4: Release & Tagging](#phase-4-release--tagging-v--v-tags)
+- [Dynamic Variant Matrix — Worked Examples](#dynamic-variant-matrix--worked-examples)
+- [Artifact & Secret Management](#artifact--secret-management)
+
+---
 
 ## Motivation
 
@@ -47,12 +61,12 @@ Smoke validation      → CI checks unit health, runs variant functional tests
 
 ### What the Podman CI Test Validates
 
-| Validates | Does Not Validate |
-|---|---|
-| Userspace integrity (all expected files, configs, scripts present) | Firmware / bootloader / GRUB path |
-| systemd unit wiring (units are enabled, dependencies correct) | Kernel / initramfs boot path |
-| Service startup logic (init scripts run, services become active) | Real disk install / partition layout |
-| Application-layer functionality (e.g., postgres accepts queries) | Full hardware boot semantics |
+| Validates                                                          | Does Not Validate                    |
+| ------------------------------------------------------------------ | ------------------------------------ |
+| Userspace integrity (all expected files, configs, scripts present) | Firmware / bootloader / GRUB path    |
+| systemd unit wiring (units are enabled, dependencies correct)      | Kernel / initramfs boot path         |
+| Service startup logic (init scripts run, services become active)   | Real disk install / partition layout |
+| Application-layer functionality (e.g., postgres accepts queries)   | Full hardware boot semantics         |
 
 This distinction matters: a green CI run means the image's userspace and services are correct. It does not replace a full ISO boot test for hardware-specific validation.
 
@@ -78,7 +92,7 @@ Commits pushed to development branches trigger lightweight static analysis — n
 
 ## Phase 2: Pull Request Gating (Shift-Left Validation)
 
-Before any code merges to `main`, it must successfully compile, boot, pass functional tests, and clear a CVE scan. This prevents broken or vulnerable configurations from entering the main branch.
+Before any code merges to `main`, it must successfully compile, boot, pass functional tests, and gone through a CVE scan. This prevents broken or vulnerable configurations from entering the main branch.
 
 ### Dynamic Build Matrix
 
@@ -92,7 +106,7 @@ The `setup-matrix` job uses `dorny/paths-filter` to detect exactly which directo
 
 After compiling, the pipeline starts the image as a container under a full systemd PID 1 (`podman run -d --systemd=always`). It then verifies that `node-exporter` is active via `systemctl is-active`.
 
-`node-exporter` acts as a **canary**: it sits at the end of the systemd dependency chain. If it is active, the entire unit graph — including any init scripts for the variant — executed successfully. If systemd panics, a service crashes, or an init script fails, `node-exporter` never reaches active state and the pipeline fails immediately.
+`node-exporter` is included in all variants for Prometheus monitoring, not as a test artifact. The boot test reuses it as a **canary**: since it is a lightweight service with no variant-specific dependencies, its active state confirms that systemd is running and basic unit startup is functional. However, it does not guarantee that other services (e.g., postgres) are healthy — variant-specific services can fail independently without affecting `node-exporter`. Failures in those services are caught by the variant-specific tests described below.
 
 ### Variant-Specific Tests
 
