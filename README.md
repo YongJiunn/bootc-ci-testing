@@ -1,6 +1,6 @@
 # Introduction
 
-This repo contains the code and configurations required to maintain STARLAB's BootC Builder, a centralised factory that churns out variant-specific hardened CentOS BootC images.
+This repo contains the code and configurations required to maintain a centralised, hardened base CentOS BootC image, along with relavent variants (Bind Server, Bastion Host, PostgreSQL, HAProxy).
 
 # Table of Contents
 
@@ -222,6 +222,14 @@ podman build . -f Containerfile -t localhost/centos-bootc:dev \
 
 **Hardened:**
 
+```
+podman build . -f .\Containerfile -t localhost/postgres-bootc:hardened \
+  --build-arg VARIANT="stock" \
+  --build-arg BOOTLOADER_PASSWORD="P@ssw0rd" \
+  --build-arg HARDENED=true \
+  --no-cache
+```
+
 ```bash
 podman build . -f Containerfile -t localhost/bootc-postgres:hardened \
   --build-arg VARIANT="postgres" \
@@ -281,24 +289,34 @@ At the GRUB screen press `e` to edit the boot entry. Append `fips=1` to the kern
    ![Admin password](assets/sudo-password.png)
 2. Configure `/etc/chrony.conf` to point to the correct NTP server.
 3. Set the GRUB password to prevent unauthorised boot access:
+
    ```bash
    sudo grub2-setpassword
    ```
+
    The hash is stored in `/boot/grub2/user.cfg`. Default GRUB username is `root`.
+
+   Reboot the system to apply the changes and test that the password is set correctly.
+   At GRUB menu, press `e` or `c` to enter the edit mode and you should be prompted to enter the password.
+
+   What this does is that it automatically generates the PBKDf2 hash and stored it securely in `/boot/grub2/user.cfg`.
 
 ### Postgres variant — first-boot steps
 
-1. Log in as `postgres_user` (default password expires immediately — you will be forced to change it).
-2. Run `psql` as `postgres_user` to enter the database instance as superuser.
-3. For remote connections via `postgres_user`: run `just retrieve-postgres-password` to initialise a password.
-4. For TLS (administrators): generate certificates using your internal CA and place them in `$PGDATA`, then restart:
-   ```bash
-   PGDATA=$(systemctl show -p Environment postgresql-17.service | tr ' ' '\n' | sed -n 's/^PGDATA=//p')
-   # copy root-ca.crt, server.key, server.crt into $PGDATA
-   chown postgres:postgres $PGDATA/root-ca.crt $PGDATA/server.key $PGDATA/server.crt
-   chmod 600 $PGDATA/root-ca.crt $PGDATA/server.key $PGDATA/server.crt
-   systemctl restart postgresql-17
-   ```
+1. As part of the build process, a default password for the `postgres_user` user will be created that is set to expire immediately. Log in using that user and reset the password. This user is a superuser to the database instance.
+2. In this shell, just run `psql` to enter the postgres instance as `postgres_user`. Create other users such as DB Admins here.
+3. If remote connection is needed through the `postgres_user` superuser, run `just retrieve-postgres-password` as `postgres_user` to initialize a password.
+4. (for administrators only) On initialisation, from the console, the password for admin user (user defined as part of build argument) will be displayed. Log in using this user and configure the following when inside the JPE environment.
+
+- Use the internal CA to generate a set of TLS certificates. Restart by running `systemctl restart postgresql-<version>`.
+
+```
+PGDATA=$(systemctl show -p Environment "postgresql-15.service" | sed 's/^Environment=//' | tr ' ' '\n' | sed -n 's/^PGDATA=//p' | tail -n 1)
+# move root-ca.crt, server.key, server.crt into $PGDATA directory
+
+chown postgres:postgres $PGDATA/root-ca.crt $PGDATA/server.key $PGDATA/server.crt
+chmod 600 $PGDATA/root-ca.crt $PGDATA/server.key $PGDATA/server.crt
+```
 
 ## Compliance Scanning
 
@@ -307,6 +325,14 @@ Compliance scans require the admin user.
 **CIS Level 2 scan:**
 
 ```bash
+# Run this as sudo
+sudo oscap info /usr/share/xml/scap/ssg/content/ssg-cs9-ds.xml
+
+# Scan for CIS Level 2 Compliance
+sudo oscap xccdf eval --profile xccdf_org.ssgproject.content_profile_cis --report <dir> /usr/share/xml/scap/ssg/content/ssg-cs9-ds.xml
+
+OR
+
 sudo oscap xccdf eval \
   --tailoring-file /usr/share/ssg-cs9-ds-tailoring.xml \
   --profile xccdf_org.ssgproject.content_profile_cis_customized \
@@ -334,18 +360,20 @@ chmod +x tailoring_script/generate_tailoring.sh
 ./tailoring_script/generate_tailoring.sh
 ```
 
-The generated XML is written to `system_files/usr/share/ssg_cs9_ds_tailoring_generated.xml`. Reference it in `build_scripts/common/39-harden-os-rhel9.sh` and during compliance scanning.
+The generated XML is written to `system_files/usr/share/ssg_cs9_ds_tailoring_generated.xml`. You may than use this file to apply your hardening at build_scripts "39-harden-os-rhel9.sh" and also during compliance scanning.
 
-## Temporary Debug User
+## [OPTIONAL] Temporary Debug User
 
-For early-stage local development only. **Do not include in production images.**
+A temporary local user account can be created only for early-stage debugging and first-boot validation during image development, if intended. Actual image should not have this user.
 
-Add to `image.toml`:
+Add the following in `image.toml`:
 
-```toml
+```
 [[customizations.user]]
 name = "debuguser"
 description = "Temporary debug user to test first-boot scripts"
 password = "changeme"
 groups = ["wheel"]
 ```
+
+The presence of this account is a temporary development control. All production images are to be built without local debug users.
