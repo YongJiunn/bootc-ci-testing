@@ -2,16 +2,15 @@ name: bootc-lint
 
 on:
   pull_request:
-    branches: [ main ]
+    branches: [main]
     types: [opened, synchronize, reopened]
   push:
-    branches: [ dev ]
+    branches-ignore: [main]
 
 permissions:
   contents: read
 
 jobs:
-
   # =============================================================================
   # JOB: lint
   # Fast static checks that run on every PR and every push to dev.
