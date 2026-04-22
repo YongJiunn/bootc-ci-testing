@@ -25,7 +25,7 @@ This repo contains the code and configurations required to maintain STARLAB's Bo
 
 ---
 
-# Features
+# Current Features
 
 **Stock (all variants include this)**
 
@@ -54,22 +54,24 @@ Each variant (`postgres`, `haproxy`, `servicevm`, `bastion`) produces an **OCI i
 
 The same OCI image is consumed in two different ways:
 
-| Consumer | How it uses the image |
-|---|---|
-| **CI (podman)** | Runs as a container under systemd to validate userspace and service wiring |
-| **Deployment (bootc-image-builder)** | Wraps the image into a bootable Anaconda ISO for real hardware or VMs |
+| Consumer                             | How it uses the image                                                      |
+| ------------------------------------ | -------------------------------------------------------------------------- |
+| **CI (podman)**                      | Runs as a container under systemd to validate userspace and service wiring |
+| **Deployment (bootc-image-builder)** | Wraps the image into a bootable Anaconda ISO for real hardware or VMs      |
 
 ## What CI Tests Validate vs What They Don't
 
 The CI boots the image as a container with `podman run --systemd=always`. systemd starts as PID 1 inside the container, bringing up units just as a real OS boot would — but only the userspace portion.
 
 **Validates:**
+
 - All expected files, configs, and init scripts are present and executable
 - systemd unit wiring is correct (units enabled, dependencies resolve)
 - Services start successfully (init scripts run, app services reach active state)
 - Application-layer correctness (e.g. postgres accepts queries) — via variant tests
 
 **Does not validate:**
+
 - Firmware / bootloader / GRUB path
 - Kernel or initramfs behaviour
 - Real disk install or partition layout
@@ -79,7 +81,11 @@ A green CI run means the image's userspace is correct. A full ISO boot on real h
 ## Pipeline Flow
 
 ```
+Push to dev / PR opened
+  └─ Lint                  ShellCheck all *.sh files; enforce LF line endings
+
 PR opened
+  ├─ Lint                  (same as above)
   └─ setup-matrix          Detect which variants changed (path filter)
   └─ build-variants        For each affected variant, run in parallel:
        ├─ Build             Compile OCI image (secrets injected at build-time only)
@@ -95,24 +101,24 @@ PR merged to main
   └─ Delete :pr-{N} tag and verify it is gone
 
 Release tag pushed (e.g. postgres-v2.1 or v3.0)
-  └─ Pull :latest (no rebuild)
+  └─ Pull :latest          (no rebuild — consumes the promoted artifact)
   └─ Final Trivy scan
-  └─ Build bootable Anaconda ISO via bootc-image-builder
-  └─ Attach ISO + Trivy report + blank SFR to GitHub Release
+  └─ Tag versioned         Push :v{version} and :sha-{short} tags to GHCR
+  └─ Build ISO             bootc-image-builder wraps the OCI image into an Anaconda ISO
+  └─ Split ISO             Split into ≤1.9 GB parts (GitHub Release file size limit)
+  └─ Attach to Release     ISO parts + Trivy report + blank SFR uploaded to GitHub Release
 ```
-
-> **Why node-exporter for the health check?** node-exporter sits at the end of the systemd dependency chain. If it is active, every upstream unit — including variant-specific init scripts — completed successfully. If anything in the chain crashed, node-exporter never reaches active state and the pipeline fails immediately.
 
 ## Variant Matrix Logic
 
-The pipeline only rebuilds variants whose files changed — not all four every time.
+The pipeline only rebuilds variants whose files changed — not all every time.
 
-| What changed | Variants built |
-|---|---|
+| What changed                                 | Variants built                                          |
+| -------------------------------------------- | ------------------------------------------------------- |
 | `Containerfile` or `build_scripts/common/**` | All variants — shared foundation, any could be affected |
-| `build_scripts/postgres/**` only | `postgres` only |
-| `build_scripts/haproxy/**` only | `haproxy` only |
-| None of the above | Nothing — pipeline skipped entirely |
+| `build_scripts/postgres/**` only             | `postgres` only                                         |
+| `build_scripts/haproxy/**` only              | `haproxy` only                                          |
+| None of the above                            | Nothing — pipeline skipped entirely                     |
 
 ## How to Add Variant-Specific Tests
 
@@ -177,27 +183,27 @@ runuser -u postgres -- psql -c "SELECT version();"
 
 ### Stock Arguments
 
-| Argument | Description | Default |
-|---|---|---|
-| `EL_VERSION` | CentOS Stream version | `9` |
-| `ARCH` | Target architecture | `x86_64` |
-| `ADMIN_USERNAME` | Admin OS account name | `starforge` |
-| `HARDENED` | Enables hardened build (CIS, FIPS, bootloader password) | `false` |
-| `BOOTLOADER_PASSWORD` | GRUB password — required when `HARDENED=true` | — |
+| Argument              | Description                                             | Default     |
+| --------------------- | ------------------------------------------------------- | ----------- |
+| `EL_VERSION`          | CentOS Stream version                                   | `9`         |
+| `ARCH`                | Target architecture                                     | `x86_64`    |
+| `ADMIN_USERNAME`      | Admin OS account name                                   | `starforge` |
+| `HARDENED`            | Enables hardened build (CIS, FIPS, bootloader password) | `false`     |
+| `BOOTLOADER_PASSWORD` | GRUB password — required when `HARDENED=true`           | —           |
 
 ### Postgres Variant Arguments
 
 > Required only when `VARIANT=postgres`.
 
-| Argument | Description | Default |
-|---|---|---|
-| `POSTGRESQL_USERNAME` | Admin database user created on first boot | `postgres_user` |
-| `DEFAULT_PASSWORD` | Password for `POSTGRESQL_USERNAME` — expires immediately on first login | — |
-| `POSTGRESQL_MAJOR_VERSION` | PostgreSQL major version | `17` |
-| `POSTGRESQL_MINOR_VERSION` | PostgreSQL minor version | `4` |
-| `POSTGRES_EXPORTER_USER` | Service account for Prometheus postgres_exporter | `postgres_exporter` |
-| `POSTGRES_EXPORTER_PASSWORD` | Password for the exporter service account | — |
-| `POSTGRESQL_REPLICATION_PASSWORD` | Replication user password — required when `HARDENED=true` | — |
+| Argument                          | Description                                                             | Default             |
+| --------------------------------- | ----------------------------------------------------------------------- | ------------------- |
+| `POSTGRESQL_USERNAME`             | Admin database user created on first boot                               | `postgres_user`     |
+| `DEFAULT_PASSWORD`                | Password for `POSTGRESQL_USERNAME` — expires immediately on first login | —                   |
+| `POSTGRESQL_MAJOR_VERSION`        | PostgreSQL major version                                                | `17`                |
+| `POSTGRESQL_MINOR_VERSION`        | PostgreSQL minor version                                                | `4`                 |
+| `POSTGRES_EXPORTER_USER`          | Service account for Prometheus postgres_exporter                        | `postgres_exporter` |
+| `POSTGRES_EXPORTER_PASSWORD`      | Password for the exporter service account                               | —                   |
+| `POSTGRESQL_REPLICATION_PASSWORD` | Replication user password — required when `HARDENED=true`               | —                   |
 
 ---
 
