@@ -4,13 +4,7 @@ This repo contains the code and configurations required to maintain a centralise
 
 # Table of Contents
 
-- [Features](#features)
-- [CI Pipeline](#ci-pipeline)
-  - [What This Pipeline Builds](#what-this-pipeline-builds)
-  - [What CI Tests Validate vs What They Don't](#what-ci-tests-validate-vs-what-they-dont)
-  - [Pipeline Flow](#pipeline-flow)
-  - [Variant Matrix Logic](#variant-matrix-logic)
-  - [How to Add Variant-Specific Tests](#how-to-add-variant-specific-tests)
+- [Current Features](#current-features)
 - [Development Reference](#development-reference)
   - [File Structure](#file-structure)
   - [Build Arguments](#build-arguments)
@@ -44,120 +38,12 @@ This repo contains the code and configurations required to maintain a centralise
 
 ---
 
-# CI Pipeline
-
-This section covers what you need to know to contribute to this repo via the pipeline.
-
-## What This Pipeline Builds
-
-Each variant (`postgres`, `haproxy`, `servicevm`, `bastion`) produces an **OCI image that contains a full OS rootfs** — systemd units, hardened configs, application services — packaged in OCI format. This is not a typical application container.
-
-The same OCI image is consumed in two different ways:
-
-| Consumer                             | How it uses the image                                                      |
-| ------------------------------------ | -------------------------------------------------------------------------- |
-| **CI (podman)**                      | Runs as a container under systemd to validate userspace and service wiring |
-| **Deployment (bootc-image-builder)** | Wraps the image into a bootable Anaconda ISO for real hardware or VMs      |
-
-## What CI Tests Validate vs What They Don't
-
-The CI boots the image as a container with `podman run --systemd=always`. systemd starts as PID 1 inside the container, bringing up units just as a real OS boot would — but only the userspace portion.
-
-**Validates:**
-
-- All expected files, configs, and init scripts are present and executable
-- systemd unit wiring is correct (units enabled, dependencies resolve)
-- Services start successfully (init scripts run, app services reach active state)
-- Application-layer correctness (e.g. postgres accepts queries) — via variant tests
-
-**Does not validate:**
-
-- Firmware / bootloader / GRUB path
-- Kernel or initramfs behaviour
-- Real disk install or partition layout
-
-A green CI run means the image's userspace is correct. A full ISO boot on real hardware is still required for hardware-specific validation. See [`service_design/ci-pipeline-design.md`](service_design/ci-pipeline-design.md) for a detailed breakdown with boot path diagrams.
-
-## Pipeline Flow
-
-```
-Push to dev / PR opened
-  └─ Lint                  ShellCheck all *.sh files; enforce LF line endings
-
-PR opened
-  ├─ Lint                  (same as above)
-  └─ setup-matrix          Detect which variants changed (path filter)
-  └─ build-variants        For each affected variant, run in parallel:
-       ├─ Build             Compile OCI image (secrets injected at build-time only)
-       ├─ Systemd Boot      Start image under systemd as PID 1
-       ├─ Health Check      Verify node-exporter is active — proves the full init
-       │                    chain completed without errors
-       ├─ Variant Tests     Run .github/variant-tests/<variant>/*.sh in the container
-       ├─ Trivy Scan        CVE scan on a confirmed-functional image
-       └─ Snapshot          Push verified image to GHCR as :pr-{N}
-
-PR merged to main
-  └─ Promote :pr-{N} → :latest  (no rebuild — same digest as what was tested)
-  └─ Delete :pr-{N} tag and verify it is gone
-
-Release tag pushed (e.g. postgres-v2.1 or v3.0)
-  └─ Pull :latest          (no rebuild — consumes the promoted artifact)
-  └─ Final Trivy scan
-  └─ Tag versioned         Push :v{version} and :sha-{short} tags to GHCR
-  └─ Build ISO             bootc-image-builder wraps the OCI image into an Anaconda ISO
-  └─ Split ISO             Split into ≤1.9 GB parts (GitHub Release file size limit)
-  └─ Attach to Release     ISO parts + Trivy report + blank SFR uploaded to GitHub Release
-```
-
-## Variant Matrix Logic
-
-The pipeline only rebuilds variants whose files changed — not all every time.
-
-| What changed                                 | Variants built                                          |
-| -------------------------------------------- | ------------------------------------------------------- |
-| `Containerfile` or `build_scripts/common/**` | All variants — shared foundation, any could be affected |
-| `build_scripts/postgres/**` only             | `postgres` only                                         |
-| `build_scripts/haproxy/**` only              | `haproxy` only                                          |
-| None of the above                            | Nothing — pipeline skipped entirely                     |
-
-## How to Add Variant-Specific Tests
-
-The generic health check only proves systemd came up cleanly. For application-level assertions, place shell scripts under:
-
-```
-.github/variant-tests/<variant-name>/
-```
-
-Every `*.sh` file in that directory is automatically copied into the running container and executed in alphabetical order. A non-zero exit from any script fails the pipeline.
-
-**Example — postgres variant:**
-
-```
-.github/variant-tests/postgres/
-└── test.sh     ← executes inside the booted container as root
-```
-
-```bash
-#!/bin/bash
-set -euo pipefail
-
-# Wait for postgresql-17 to be active (init chain: init service → initdb → pg start)
-timeout 120 bash -c 'until systemctl is-active --quiet postgresql-17.service; do sleep 5; done'
-
-# Test connectivity and a basic query
-runuser -u postgres -- pg_isready -h localhost -p 5432
-runuser -u postgres -- psql -c "SELECT version();"
-```
-
-> **`sudo` vs `runuser`:** Scripts run as root inside the container. Use `runuser -u <user> -- <cmd>` to switch to a service account rather than `sudo -u <user>`. `sudo` goes through PAM, which is not fully functional in a container environment. `runuser` bypasses PAM and works in both container and bare-metal contexts.
-
----
-
 # Development Reference
 
 View workflows in [GitHub Actions](https://github.com/STARLAB1733/starlab-bootc-hub/actions).
+- Click into workflow to download release artifacts.
 
-Click into a workflow to download release artifacts.
+To add or modify variants, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## File Structure
 
@@ -227,7 +113,7 @@ podman build . -f Containerfile -t localhost/centos-bootc:dev \
 **Hardened:**
 
 ```
-podman build . -f .\Containerfile -t localhost/postgres-bootc:hardened \
+podman build . -f .\Containerfile -t localhost/stock:hardened \
   --build-arg VARIANT="stock" \
   --build-arg BOOTLOADER_PASSWORD="P@ssw0rd" \
   --build-arg HARDENED=true \
