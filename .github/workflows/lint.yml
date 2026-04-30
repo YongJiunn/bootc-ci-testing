@@ -2,15 +2,29 @@ name: bootc-lint
 
 on:
   pull_request:
-    branches: [ main ]
+    branches: [main]
     types: [opened, synchronize, reopened]
   push:
-    branches: [ dev ]
+    branches-ignore: [main]
 
 permissions:
   contents: read
 
 jobs:
+  # =============================================================================
+  # JOB: lint
+  # Fast static checks that run on every PR and every push to dev.
+  # These run without building any image, so feedback is near-instant.
+  #
+  # Checks performed:
+  #   - ShellCheck: static analysis on all *.sh files. Catches common bash
+  #     mistakes (unquoted variables, bad conditionals, undefined vars, etc.)
+  #     before they cause silent failures inside a container build.
+  #   - CRLF check: enforces Unix line endings (LF only) on build_scripts and
+  #     Containerfile. CRLF endings in shell scripts cause shebang lines to
+  #     fail at exec time with "No such file or directory" because the kernel
+  #     sees "#!/bin/bash\r" as the interpreter path — a hard-to-diagnose error.
+  # =============================================================================
   lint:
     name: Lint Scripts & Files
     runs-on: ubuntu-latest
@@ -23,10 +37,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck
 
+      # Runs shellcheck against every .sh file in the repo.
+      # Fails the pipeline on any warning or error so issues are caught before
+      # a full image build is triggered.
       - name: ShellCheck all shell scripts
         run: |
           shellcheck $(find . -type f -name "*.sh")
 
+      # Scans build_scripts/ and Containerfile for carriage-return bytes (\r).
+      # A CRLF-encoded shell script will fail at runtime when the kernel tries
+      # to exec the shebang interpreter — the \r becomes part of the path.
       - name: CRLF check
         run: |
           if grep -R $'\r' build_scripts Containerfile; then

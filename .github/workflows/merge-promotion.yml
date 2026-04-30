@@ -12,6 +12,15 @@ permissions:
   id-token: write
 
 jobs:
+
+  # =============================================================================
+  # JOB: setup-matrix
+  # Identifies which variants were affected by the merged PR.
+  #
+  # Same path-filter logic as pr-ci.yml. We only promote variants whose source
+  # files were part of this PR — avoids re-promoting unrelated variants and
+  # keeps the :latest tag stable for variants that didn't change.
+  # =============================================================================
   setup-matrix:
     name: Identify Merged Variants
     if: github.event.pull_request.merged == true
@@ -66,6 +75,19 @@ jobs:
             }
             core.setOutput("matrix", JSON.stringify(matrix));
 
+  # =============================================================================
+  # JOB: promote-image
+  # Promotes the tested PR snapshot to :latest. Runs once per variant in the matrix.
+  #
+  # We never rebuild on merge. Instead, we pull the exact OCI digest that was
+  # built and tested during the PR, retag it as :latest, and push. This gives a
+  # mathematical guarantee: the :latest image is byte-for-byte identical to what
+  # passed all tests in the PR — no possibility of dependency drift between
+  # test time and release time.
+  #
+  # After promotion the :pr-{N} tag is deleted to keep the registry clean.
+  # A verification pull confirms the tag is truly gone before the job completes.
+  # =============================================================================
   promote-image:
     name: Promote Artifact to Latest
     needs: [setup-matrix]
@@ -80,6 +102,8 @@ jobs:
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
+      # Pull the PR snapshot by its immutable :pr-{N} tag, retag as :latest, push.
+      # No podman build here — same layers, same digest, just a new tag reference.
       - name: Promote Tag
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
@@ -92,6 +116,9 @@ jobs:
           podman tag "${IMAGE}:pr-${{ github.event.pull_request.number }}" "${IMAGE}:latest"
           podman push "${IMAGE}:latest"
 
+      # Remove the :pr-{N} tag now that :latest points to the same digest.
+      # Uses the GitHub Packages API directly: list versions, filter by tag name
+      # to get the version ID, then delete by ID.
       - name: Delete PR Artifact Tag
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
@@ -110,6 +137,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Confirm deletion by attempting to pull the tag.
+      # A successful pull means the tag still exists and deletion failed → step fails.
+      # A failed pull (manifest not found) is the expected passing outcome.
       - name: Verify PR Tag Deleted
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')

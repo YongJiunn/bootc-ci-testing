@@ -12,6 +12,24 @@ permissions:
   id-token: write
 
 jobs:
+
+  # =============================================================================
+  # JOB: setup-matrix
+  # Decides which variant(s) to build for this PR.
+  #
+  # Not every PR needs to rebuild every variant. This job reads which files
+  # changed and produces a JSON array of variant names. The build-variants job
+  # below runs once per entry in that array (GitHub Actions matrix strategy).
+  #
+  # Variant selection logic:
+  #   - Containerfile or build_scripts/common/** changed
+  #       → ALL variants rebuild. These are shared foundations — a change here
+  #         could break any variant, so all must be re-validated.
+  #   - Only build_scripts/postgres/** changed
+  #       → ONLY "postgres" rebuilds. No point retesting haproxy/servicevm/bastion.
+  #   - No recognised paths changed
+  #       → Empty matrix; build-variants is skipped entirely.
+  # =============================================================================
   setup-matrix:
     name: Determine Variants to Build
     runs-on: ubuntu-latest
@@ -66,6 +84,21 @@ jobs:
             }
             core.setOutput("matrix", JSON.stringify(matrix));
 
+  # =============================================================================
+  # JOB: build-variants
+  # Builds, boot-tests, security-scans, and snapshots each affected variant.
+  # Runs in parallel, once per variant produced by setup-matrix.
+  #
+  # Step order is deliberate:
+  #   1. Build         — compile OCI image; secrets injected at build-time only
+  #   2. Boot & canary — start image under systemd; confirm init chain is healthy
+  #   3. Variant tests — run .github/variant-tests/<variant>/*.sh inside the
+  #                      running container (place your variant tests there)
+  #   4. Teardown      — remove the test container before scanning
+  #   5. Trivy scan    — CVE scan on a confirmed-functional image; avoids
+  #                      spending scan time on images that can't even boot
+  #   6. Push snapshot — tag the verified image as :pr-{N} for promotion on merge
+  # =============================================================================
   build-variants:
     name: Build & Test Component
     needs: [setup-matrix]
@@ -79,11 +112,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # podman: container runtime used to build and boot the image
+      # trivy:  CVE scanner; installed here so the scan step has no network dependency later
       - name: Install Tooling
         run: |
           sudo apt-get update
           sudo apt-get install -y podman wget gnupg lsb-release trivy
 
+      # Compile the OCI image from the Containerfile.
+      # Secrets are passed as --secret (tmpfs-backed during build, never baked
+      # into any image layer). The resulting image lives locally only at this point.
       - name: Build ${{ matrix.variant }} bootc image
         env:
           BOOTLOADER_PASSWORD: ${{ secrets.BOOTLOADER_PASSWORD }}
@@ -103,6 +141,14 @@ jobs:
             --no-cache \
             .
 
+      # Start the image as a container with systemd as PID 1 (--systemd=always).
+      # This mirrors the service startup behaviour of a real OS boot, minus the
+      # firmware/bootloader/kernel path (see README for what this does and does
+      # not validate).
+      #
+      # Canary: node-exporter sits at the tail of the systemd dependency chain.
+      # If it is active, the entire unit graph executed successfully — init
+      # scripts ran, services started, no silent crashes in the chain.
       - name: Test Systemd OS Boot
         run: |
           echo "Booting the immutable container with systemd..."
@@ -121,6 +167,12 @@ jobs:
               exit 1
           fi
 
+      # Variant-specific functional tests run inside the already-booted container.
+      # To add tests for a variant, place shell scripts under:
+      #   .github/variant-tests/<variant-name>/
+      # Every *.sh file in that directory is copied into the container and
+      # executed in alphabetical order. A non-zero exit from any script fails
+      # the pipeline immediately.
       - name: Inject Variant-Specific Tests
         run: |
           TEST_DIR=".github/variant-tests/${{ matrix.variant }}"
@@ -135,9 +187,16 @@ jobs:
               echo "No custom tests defined for ${{ matrix.variant }}, skipping..."
           fi
 
+      # Remove the test container before scanning. Runs even if earlier steps
+      # failed so runner resources are always cleaned up.
       - name: Teardown Sandbox
+        if: always()
         run: podman rm -f -v test-boot
 
+      # Save to tarball so Trivy scans the local image without needing registry access.
+      # Trivy runs here — after boot validation — so we only spend scan time on an
+      # image that has already been confirmed functional. A broken image that can't
+      # boot is caught earlier and never reaches this step.
       - name: Save image to tarball
         run: podman save -o bootc-${{ matrix.variant }}.tar bootc-${{ matrix.variant }}:latest
 
@@ -160,6 +219,10 @@ jobs:
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
+      # Snapshot the verified image to GHCR tagged as :pr-{N}.
+      # On merge, the promotion workflow pulls this exact digest and retags it
+      # as :latest — no rebuild. This guarantees the released image is byte-for-byte
+      # identical to what was built and tested here.
       - name: Push PR Artifact Snapshot
         if: github.event_name == 'pull_request'
         run: |

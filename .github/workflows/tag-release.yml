@@ -12,6 +12,21 @@ permissions:
   id-token: write
 
 jobs:
+
+  # =============================================================================
+  # JOB: setup-matrix
+  # Determines which variant(s) to release based on the pushed tag name.
+  #
+  # Tag naming convention drives the release scope:
+  #   - Tag matches *-v* (e.g., "postgres-v2.1", "haproxy-v1.0")
+  #       → Extract the prefix before "-v" as the target variant.
+  #         Only that variant's ISO is generated.
+  #   - Tag matches v* only (e.g., "v3.0") — no variant prefix
+  #       → Default to all variants. All four ISOs are generated in parallel.
+  #
+  # This lets teams cut targeted single-variant releases without triggering
+  # a full four-variant ISO build.
+  # =============================================================================
   setup-matrix:
     name: Determine Target Releases
     runs-on: ubuntu-latest
@@ -25,7 +40,7 @@ jobs:
         run: |
           DEFAULT_MATRIX='["postgres", "haproxy", "servicevm", "bastion"]'
           SELECTED="[]"
-          
+
           if [[ "$TAG_NAME" == *-v* ]]; then
             PREFIX=$(echo "$TAG_NAME" | sed -n 's/^\(.*\)-v[0-9].*/\1/p')
             if [ -n "$PREFIX" ]; then
@@ -38,6 +53,25 @@ jobs:
           fi
           echo "matrix=$SELECTED" >> $GITHUB_OUTPUT
 
+  # =============================================================================
+  # JOB: release-iso
+  # Produces the bootable ISO and release artifacts for each variant in the matrix.
+  # Runs in parallel, once per variant.
+  #
+  # Critically: this job does NOT rebuild the image. It pulls the :latest tag
+  # that was already promoted by merge-promotion.yml. This guarantees the ISO
+  # is derived from the exact digest that was built, tested, and promoted —
+  # no risk of dependency drift from a fresh build at release time.
+  #
+  # Step order:
+  #   1. Pull :latest      — fetch the promoted, tested OCI image from GHCR
+  #   2. Trivy scan        — final CVE gate before ISO generation
+  #   3. Generate SFR      — blank Software Evaluation Report template for compliance
+  #   4. Tag versioned     — push :v{version} and :sha-{short} tags to GHCR
+  #   5. Build ISO         — bootc-image-builder wraps OCI image into Anaconda ISO
+  #   6. Split ISO         — GitHub Releases has a 2GB file limit; split into parts
+  #   7. Upload to Release — attach ISO parts, Trivy report, and SFR to the GitHub Release
+  # =============================================================================
   release-iso:
     name: Execute ISO Generation
     needs: [setup-matrix]
@@ -65,6 +99,8 @@ jobs:
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
+      # Pull the :latest image that was promoted by merge-promotion.yml.
+      # No podman build here — we consume the exact tested artifact, not a fresh build.
       - name: Pull Promoted Image
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
@@ -75,6 +111,8 @@ jobs:
       - name: Save image as OCI archive
         run: sudo podman save -o bootc-${{ matrix.variant }}.tar bootc-${{ matrix.variant }}:latest
 
+      # Final CVE gate. HIGH/CRITICAL findings are reported; the report is
+      # attached to the release so consumers can review known vulnerabilities.
       - name: Generate Trivy report
         run: |
           trivy image \
@@ -83,17 +121,20 @@ jobs:
             --output trivy-report-${{ matrix.variant }}.txt \
             --input bootc-${{ matrix.variant }}.tar
 
+      # Generates a blank Software Evaluation Report (SFR) template.
+      # This is a compliance artifact — the release engineer fills it in
+      # before the release is formally signed off.
       - name: Generate Blank SFR
         run: |
           cat << 'EOF' > sfr-report-${{ matrix.variant }}.toml
           [report.details]
           name =
           type =
-          date = 
+          date =
 
           [report.software.image]
-          image_source = 
-          full_image_tag = 
+          image_source =
+          full_image_tag =
 
           [report.software.general]
           language =  ""
@@ -105,14 +146,14 @@ jobs:
           configuration_mgmt_requirements = ""
           others = ""
 
-          [report.software.opensource]      
+          [report.software.opensource]
           reputation = ""
           source_code_url = ""
-          updates = ""      
+          updates = ""
           community_support = ""
-          cis-benchmark = ""      
+          cis-benchmark = ""
 
-          [report.software.closedsource]      
+          [report.software.closedsource]
           reputation = ""
           updates = ""
           cis-benchmark = ""
@@ -121,6 +162,9 @@ jobs:
           CVE-2025-XXXX = { expires_on = "", justification = "" }
           EOF
 
+      # Push two additional tags to GHCR for traceability:
+      #   :{version} — human-readable release tag (e.g., :postgres-v2.1)
+      #   :sha-{7}   — short commit SHA for precise digest tracing
       - name: Tag and Push Versioned Artifact
         run: |
           VERSION="${GITHUB_REF#refs/tags/}"
@@ -130,10 +174,13 @@ jobs:
 
           sudo podman tag bootc-${{ matrix.variant }}:latest "${IMAGE}:${VERSION}"
           sudo podman tag bootc-${{ matrix.variant }}:latest "${IMAGE}:sha-${SHA}"
-          
+
           sudo podman push "${IMAGE}:${VERSION}"
           sudo podman push "${IMAGE}:sha-${SHA}"
 
+      # bootc-image-builder consumes the OCI image and produces a bootable
+      # Anaconda ISO. It runs as a privileged container because it needs to
+      # manipulate loop devices and partition tables to assemble the ISO.
       - name: Build ISO (bootc-image-builder)
         run: |
           VERSION="${GITHUB_REF#refs/tags/}"
@@ -158,10 +205,17 @@ jobs:
             --target-arch amd64 \
             --rootfs ext4
 
+      # GitHub Releases has a 2 GB per-file limit. Split the ISO into 1.9 GB
+      # parts so every chunk fits. To reassemble after downloading:
+      #   cat bootc-<variant>.iso.part-* > bootc-<variant>.iso
       - name: Split ISO for GitHub Release
         run: |
           split -b 1900M output/bootloader.iso/bootiso/install.iso output/bootc-${{ matrix.variant }}.iso.part-
 
+      # Attach all release artifacts to the GitHub Release that triggered this workflow:
+      #   - ISO parts (reassemble locally after download)
+      #   - Trivy CVE report
+      #   - Blank SFR template for compliance sign-off
       - name: Upload ISO to GitHub Release
         uses: softprops/action-gh-release@v2
         with:

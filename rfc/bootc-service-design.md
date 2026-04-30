@@ -1,19 +1,19 @@
 # BootC Builder RFC
 
-| **Metadata**       | **Value**             |
-|--------------------|-----------------------|
-| **Status**         | V1            |
-| **Authors**        | @lewyongjiun        |
-| **Created**        | 02-01-2026            |
-| **Last Updated**   | 05-02-2026            |
-| **Decision Date**  | 04-02-2026       |
-| **Approvers**      | @jingkang         |
+| **Metadata**      | **Value**    |
+| ----------------- | ------------ |
+| **Status**        | V1           |
+| **Authors**       | @lewyongjiun |
+| **Created**       | 02-01-2026   |
+| **Last Updated**  | 05-02-2026   |
+| **Decision Date** | 04-02-2026   |
+| **Approvers**     | @jingkang    |
 
 ## Change log
 
-| Version | Date       | Changes                          | Author       |
-|---------|------------|----------------------------------|--------------|
-| v1.0    | 2025-02-05 | Initial Service Design                    | @lewyongjiun         |
+| Version | Date       | Changes                | Author       |
+| ------- | ---------- | ---------------------- | ------------ |
+| v1.0    | 2025-02-05 | Initial Service Design | @lewyongjiun |
 
 ## Motivation
 
@@ -47,7 +47,7 @@ This shifts critical concerns—such as upgrades, security compliance, and rollb
 
 ### Scope
 
-- Design and implementation of a Bootc Hub to build versioned VM images from a common hardened base with role-specific variants (e.g. bastion, service, HAProxy, Postgres).
+- Design and implementation of a Bootc Builder to build versioned VM images from a common hardened base with role-specific variants (e.g. bastion, service, HAProxy, Postgres).
 
 - Definition of what is baked into bootc images versus what remains configured via Ansible.
 
@@ -62,20 +62,21 @@ The Bootc Builder is a controlled repository that composes, builds, and validate
 ### Proposed design
 
 ![Bootc Builder architecture](bootc-builder-design.png)
-*Figure 1: Bootc Builder base and variants relation (Non-exhaustive) at build time*
+_Figure 1: Bootc Builder base and variants relation (Non-exhaustive) at build time_
 
 ### Proposed Bootc and Ansible components
+
 This section describes what is installed into bootc images at **build time** and what is to-be configured via Ansible at **runtime** (after bootc image is booted) for each variant.
 
-**Note:** Bootc builder is only largely intended for **build stage**, to install variant specific tools via bash scripts, ouputting ISO files. While our starforge-playbook (Ansible) will be used during **configuration stage** at runtime to configure variant specific services and tooling.
+**Note:** Bootc builder is only largely intended for **build stage**, to install variant specific tools via bash scripts, ouputting ISO files (former). While our starforge-playbook (Ansible) will be used during **configuration stage** at runtime to configure variant specific services and tooling (latter).
 
-| Variant name | bootc (Installations) | ansible (Configurations) |
-|----------|----------|----------|
-| Base/Common  | **Observability:**<br>- node_exporter<br>- Vector<br><br>**Common boot scripts:**<br>- user-init<br>- grub hardening<br>- OS hardening (Variant specific)<br><br>**Time & networking:**<br>- Chrony (installed & enabled)<br>- Firewall zone configuration  |   |
-| Bastion  | **Provisioning services:**<br>- DHCP<br><br>**Tooling:**<br>- OpenShift CLI tools (oc, kubectl, oc-mirror)  | **Provisioning services:**<br>- DHCP Configuration<br>- Ignition Configuration<br>- Firewall Configurations<br><br>**Tooling:**<br>- Post Ignition Configurations (Openshift)<br>- Operators Installation and Configurations |
-| Service  | **Core services:**<br>- DNS (BIND)<br>- Keepalived<br>- Mirror registry (Quay)<br><br>**Tooling:**<br>- OpenShift CLI tools (oc, kubectl, oc-mirror)  | **Core services:**<br>- DNS Configuration<br>- KeepAlived Configuration<br>- ntpServer chrony configurations<br>- Firewall Configurations<br><br>**Tooling:**<br>- Push Images to mirror  |
-| HaProxy  | **Traffic & HA:**<br>- HAProxy<br>- Keepalived  |  **Traffic & HA:**<br>- HaProxy Configuration<br>- Set and start KeepAlived Configuration<br>- ntpClient chrony Configurations<br>- Firewall configurations|
-| Postgres   | **Data services:**<br>- PostgreSQL (install and harden)  |   |
+| Variant name | bootc (Installations)                                                                                                                                                                                                                                      | ansible (Configurations)                                                                                                                                                                                                     |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base/Common  | **Observability:**<br>- node_exporter<br>- Vector<br><br>**Common boot scripts:**<br>- user-init<br>- grub hardening<br>- OS hardening (Variant specific)<br><br>**Time & networking:**<br>- Chrony (installed & enabled)<br>- Firewall zone configuration |                                                                                                                                                                                                                              |
+| Bastion      | **Provisioning services:**<br>- DHCP<br><br>**Tooling:**<br>- OpenShift CLI tools (oc, kubectl, oc-mirror)                                                                                                                                                 | **Provisioning services:**<br>- DHCP Configuration<br>- Ignition Configuration<br>- Firewall Configurations<br><br>**Tooling:**<br>- Post Ignition Configurations (Openshift)<br>- Operators Installation and Configurations |
+| Service      | **Core services:**<br>- DNS (BIND)<br>- Keepalived<br>- Mirror registry (Quay)<br><br>**Tooling:**<br>- OpenShift CLI tools (oc, kubectl, oc-mirror)                                                                                                       | **Core services:**<br>- DNS Configuration<br>- KeepAlived Configuration<br>- ntpServer chrony configurations<br>- Firewall Configurations<br><br>**Tooling:**<br>- Push Images to mirror                                     |
+| HaProxy      | **Traffic & HA:**<br>- HAProxy<br>- Keepalived                                                                                                                                                                                                             | **Traffic & HA:**<br>- HaProxy Configuration<br>- Set and start KeepAlived Configuration<br>- ntpClient chrony Configurations<br>- Firewall configurations                                                                   |
+| Postgres     | **Data services:**<br>- PostgreSQL (install and harden)                                                                                                                                                                                                    |                                                                                                                                                                                                                              |
 
 ### Limitation & Concerns
 
@@ -99,22 +100,6 @@ This section describes what is installed into bootc images at **build time** and
 
    Teams must adapt from runtime configuration to image-first thinking, including new debugging and rollback workflows.
 
-## Open questions and decisions 
-
-1. Variant composition strategy
-
-   Should variants be built via:
-
-   - **conditional execution within a single repository (Base and Variant built together)**, or
-   - layered images with explicit base → variant inheritance (Import in Base image and build on top of it)?
-
-2. Binary sourcing policy
-
-   Should tools like oc, kubectl, and oc-mirror be:
-
-   - **dynamically downloaded at build time and version pin**, or
-   - sourced and supplied internally?
-
 ## Appendix
 
 ### Non-goals
@@ -124,6 +109,6 @@ This section describes what is installed into bootc images at **build time** and
 - This RFC does not cover CI/CD pipeline, Image Lifecycle and Change workflow.
 
 ### Improvements to be made
-- Outline what is the opinionated practices that we have in order for this to work. Eg, The idea of type of action should be in which layer/stage, capturing the concept of installation via script within build stage and ansible for configuration via configuration stage. 
-- What are the must do, in order to make sure the bootc variant can support upgrade etc. Eg, A necessary file is stored at diff directory at version 1, if version 2 is built, the file should be stored at diff directory. How do we handle such migration? Through Ansible? 
-- Ansible part is not outlined clearly that it is a post step across the doc, would be neat to separate it in different stages and what happen in each stage.
+
+- Outline what is the opinionated practices that we have in order for this to work. Eg, The idea of type of action should be in which layer/stage, capturing the concept of installation via script within build stage and ansible for configuration via configuration stage.
+- What are the must do, in order to make sure the bootc variant can support upgrade etc. Eg, A necessary file is stored at diff directory at version 1, if version 2 is built, the file should be stored at diff directory. How do we handle such migration? Through Ansible?
